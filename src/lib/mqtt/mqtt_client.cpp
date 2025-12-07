@@ -222,6 +222,7 @@ void MqttClientImpl::handleDisconnectAsync(int rc)
 void MqttClientImpl::handleMessageAsync(const std::string& topic, std::string message)
 {
 	std::lock_guard<std::mutex> lock(_callback_mutex);
+	spdlog::info("收到MQTT消息 - 主题: {}, 内容: {}", topic, message);
 
 	// 查找匹配的回调函数
 	for (const auto& pair : _message_callbacks)
