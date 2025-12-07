@@ -2,6 +2,7 @@
 #include <atomic>
 #include <csignal>
 
+#include <cstdint>
 #include <json/config.h>
 #include <json/reader.h>
 #include <memory>
@@ -164,6 +165,7 @@ void mqttConnectDevice_Subscribe(std::shared_ptr<MqttClientImpl> mqtt,
 	if (!Json::parseFromStream(readerBuilder, iss, &root, &errs))
 	{
 		spdlog::error("解析JSON消息失败: {}", errs);
+		return;
 	}
 
 	auto parseJson = [&](const Json::Value& root, JSONCPP_STRING& lastError) -> bool {
@@ -201,7 +203,7 @@ void mqttConnectDevice_Subscribe(std::shared_ptr<MqttClientImpl> mqtt,
 void mqttSendToDevice_Subscribe(std::shared_ptr<MqttClientImpl> mqttClient,
 								const std::string& topic,
 								const std::string& message,
-								BluetoothServer& server)
+								BluetoothClient& client)
 {
 	if (!mqttClient)
 		return;
@@ -214,8 +216,61 @@ void mqttSendToDevice_Subscribe(std::shared_ptr<MqttClientImpl> mqttClient,
 
 	if (!Json::parseFromStream(readerBuilder, iss, &root, &errs))
 	{
+	    spdlog::error("解析JSON消息失败: {}", errs);
+		return;
+	}
 
+	auto parseJson = [&](const Json::Value& root, JSONCPP_STRING& lastError) -> bool {
+		if (!root.isMember("devices"))
+		{
+			lastError = "JSON解析错误：缺少 'devices' 字段";
+			return false;
+		}
 
+		auto devices = root["devices"];
+
+		for (Json::ArrayIndex i = 0; i < devices.size(); ++i)
+		{
+			const auto& device = devices[i];
+			if (!device.isMember("address"))
+			{
+				lastError = "JSON解析错误: 缺少 'address' 字段";
+				return false;
+			}
+
+			std::string address = device["address"].asString();
+
+			if (!device.isMember("data"))
+			{
+			    lastError = "JSON解析错误: 缺少 'data' 字段";
+                return false;
+			}
+
+			std::string data = device["data"].asString();
+
+			if (!device.isMember("size"))
+			{
+			    lastError = "JSON解析错误: 缺少 'size' 字段";
+                return false;
+			}
+
+			Json::UInt size = device["size"].asUInt();
+			if (size != data.length())
+            {
+                lastError = "JSON解析错误: 数据校验失败";
+                return false;
+            }
+
+			client.send(data);
+		}
+
+		return true;
+	};
+
+	if (!parseJson(root, errs))
+	{
+		// 发布一个LastError MQTT消息
+		// mqtt_client->publishAsync("/org/booway/bluetooth/getLastError", "");
 	}
 }
 
@@ -302,8 +357,8 @@ int main(int argc, char* argv[])
 			mqtt->subscribeAsync(topic, 0);
 			mqtt->setMessageCallback(
 				topic,
-				[mqtt, &server](const std::string& topic, std::string message) {
-					mqttSendToDevice_Subscribe(mqtt, topic, message, server);
+				[mqtt, &client](const std::string& topic, std::string message) {
+					mqttSendToDevice_Subscribe(mqtt, topic, message, client);
 				});
 		}
 

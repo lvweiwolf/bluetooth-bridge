@@ -36,15 +36,15 @@ public:
 	BluetoothClient& operator=(BluetoothClient&&) = delete;
 
 	bool connect(const std::string& deviceAddress, uint8_t channel);
-	
+
 	void disconnect();
 
 	ssize_t send(const std::string& data);
-	
+
 	bool isConnected() const { return _connected; }
 
 	std::string getLocalAddress() const;
-	
+
 	std::string getRemoteAddress() const;
 
 	// 设置回调函数
@@ -69,19 +69,19 @@ public:
 	{
 		_statusCallback = std::move(callback);
 	}
-	
+
 private:
 	// 线程函数
 	void receiveThread();
-	
+
 	// 内部辅助函数
 	bool connectToDevice(const std::string& address, uint8_t channel);
 	void cleanupConnection();
-	
+
 	// 蓝牙地址转换
 	static std::string bdaddrToString(const sockaddr_rc& addr);
 	static bool stringTobaddr(const std::string& str, bdaddr_t& addr);
-	
+
 	// 错误处理
 	void handleError(const std::string& message);
 
