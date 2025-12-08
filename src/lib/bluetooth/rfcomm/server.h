@@ -23,7 +23,7 @@ class BluetoothServer
 public:
 	// 回调函数类型定义
 	using ClientCallback = std::function<void(int, const std::string&)>;
-	using DataCallback = std::function<void(int, const std::string&)>;
+	using DataCallback = std::function<void(const std::string&, const uint8_t*, size_t)>;
 	using ErrorCallback = std::function<void(int, const std::string&)>;
 
 	// SPP服务UUID (00001101-0000-1000-8000-00805F9B34FB)
@@ -39,8 +39,7 @@ public:
 		std::chrono::time_point<std::chrono::steady_clock> connectTime;
 	};
 
-	explicit BluetoothServer(const std::string& name = "Bluetooth SPP Server",
-							 uint8_t channel = 1);
+	explicit BluetoothServer(const std::string& name = "Bluetooth SPP Server", uint8_t channel = 1);
 
 	~BluetoothServer();
 
@@ -55,7 +54,7 @@ public:
 
 	bool isRunning() const { return _running; }
 
-	ssize_t sendToClient(int clientId, const std::string& data);
+	ssize_t sendToClient(int clientId, const std::vector<uint8_t>& data);
 
 	size_t broadcast(const std::string& data);
 
@@ -82,14 +81,20 @@ public:
 
 	void setErrorCallback(ErrorCallback callback) { _errorCallback = std::move(callback); }
 
+	void setBufferSize(int size) { _bufferSize = size; }
+
+	void setAcceptTimeout(int milliseconds) { _acceptTimeout = milliseconds; }
+
+	void setRecvTimeout(int milliseconds) { _recvTimeout = milliseconds; }
+
 	std::string getLocalAddress() const;
 
 	uint8_t getChannel() const { return _channel; }
 
 private:
 	void acceptThread();
-	void clientThread(int clientId, std::shared_ptr<ClientInfo> clientInfo);
-	void cleanupClient(int clientId);
+	void cleanupThread();
+	void clientThread(int clientId, ClientInfo* client);
 	int getNextClientId();
 
 	// 蓝牙地址转换
@@ -101,15 +106,21 @@ private:
 	std::string _serverName;
 	uint8_t _channel;
 	int _srvSocket;
+	int _bufferSize;
+	int _acceptTimeout;
+	int _recvTimeout;
 	std::atomic<bool> _running;
 
 	// 客户端管理
 	mutable std::mutex _clientsMutex;
-	std::unordered_map<int, std::shared_ptr<ClientInfo>> _clients;
+	std::unordered_map<int, std::unique_ptr<ClientInfo>> _clients;
 	int _nextClientId;
 
 	// 线程
 	std::thread _acceptThread;
+
+	// 垃圾回收线程
+	std::thread _cleanupThread;
 
 	// 回调函数
 	ClientCallback _clientConnectCallback;

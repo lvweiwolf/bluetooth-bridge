@@ -1,8 +1,8 @@
 {
   "dependencies": [
+    "jsoncpp",
     "mosquitto",
     "sdbus-cpp",
-    "spdlog",
-    "jsoncpp"
+    "spdlog"
   ]
 }

@@ -5,7 +5,6 @@
 #include <functional>
 #include <mutex>
 #include <thread>
-#include <memory>
 #include <string>
 
 #include <bluetooth/bluetooth.h>
@@ -22,7 +21,7 @@ class BluetoothClient
 public:
 	// 回调函数类型定义
 	using ClientCallback = std::function<void(const std::string&, uint8_t)>;
-	using DataCallback = std::function<void(const std::string&)>;
+	using DataCallback = std::function<void(const std::string&, const uint8_t*, size_t)>;
 	using ErrorCallback = std::function<void(const std::string&)>;
 	using StatusCallback = std::function<void(bool connected)>;
 
@@ -39,7 +38,7 @@ public:
 
 	void disconnect();
 
-	ssize_t send(const std::string& data);
+	ssize_t send(const std::vector<uint8_t>& data);
 
 	bool isConnected() const { return _connected; }
 
@@ -60,15 +59,15 @@ public:
 		_dataReceivedCallback = std::move(callback);
 	}
 
-	void setErrorCallback(ErrorCallback callback)
-	{
-		_errorCallback = std::move(callback);
-	}
+	void setErrorCallback(ErrorCallback callback) { _errorCallback = std::move(callback); }
 
-	void setStatusCallback(StatusCallback callback)
-	{
-		_statusCallback = std::move(callback);
-	}
+	void setStatusCallback(StatusCallback callback) { _statusCallback = std::move(callback); }
+
+	void setBufferSize(int size) { _bufferSize = size; }
+
+	void setConnectTimeout(int seconds) { _connectTimeout = seconds; }
+
+	void setRecvTimeout(int seconds) { _recvTimeout = seconds; }
 
 private:
 	// 线程函数
@@ -82,13 +81,14 @@ private:
 	static std::string bdaddrToString(const sockaddr_rc& addr);
 	static bool stringTobaddr(const std::string& str, bdaddr_t& addr);
 
-	// 错误处理
-	void handleError(const std::string& message);
-
 private:
 	// 客户端配置
-	std::string _clientName;
 	int _socket;
+	int _bufferSize;
+	int _connectTimeout;
+	int _recvTimeout;
+
+	std::string _clientName;
 	std::atomic<bool> _connected;
 	std::atomic<bool> _running;
 

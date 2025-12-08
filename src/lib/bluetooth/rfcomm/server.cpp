@@ -16,6 +16,9 @@ BluetoothServer::BluetoothServer(const std::string& name, uint8_t channel)
 	: _serverName(name),
 	  _channel(channel),
 	  _srvSocket(-1),
+	  _bufferSize(1024),
+	  _acceptTimeout(1000),
+	  _recvTimeout(1000),
 	  _running(false),
 	  _nextClientId(1),
 	  _clientConnectCallback(nullptr),
@@ -33,9 +36,11 @@ BluetoothServer::BluetoothServer(const std::string& name, uint8_t channel)
 		spdlog::info("[Server] 客户端 {} ({}) 连接断开", id, addr);
 	};
 
-	_dataReceivedCallback = [](int id, const std::string& data) {
-		spdlog::info("[Server] 从客户端 {} 获取数据: {}", id,
-					data.length() > 50 ? data.substr(0, 50) + "..." : data);
+	_dataReceivedCallback = [](const std::string& address, const uint8_t* data, size_t size) {
+		std::string dataStr(reinterpret_cast<const char*>(data), size);
+		spdlog::info("[Server] 从客户端 {} 获取数据: {}",
+					 address,
+					 dataStr.length() > 50 ? dataStr.substr(0, 50) + "..." : dataStr);
 	};
 
 	_errorCallback = [](int id, const std::string& error) {
@@ -129,6 +134,8 @@ bool BluetoothServer::start()
 
 	// 启动接受连接线程
 	_acceptThread = std::thread(&BluetoothServer::acceptThread, this);
+	// 启动垃圾回收线程
+	_cleanupThread = std::thread(&BluetoothServer::cleanupThread, this);
 
 	spdlog::info("[Server] {} 启动 RFCOMM, channel: {}", _serverName,
 			 static_cast<int>(_channel));
@@ -154,6 +161,9 @@ void BluetoothServer::stop()
 	// 等待接受线程结束
 	if (_acceptThread.joinable())
 		_acceptThread.join();
+
+	if (_cleanupThread.joinable())
+		_cleanupThread.join();
 
 	// 断开所有客户端连接
 	std::vector<int> clientIds;
@@ -181,7 +191,13 @@ void BluetoothServer::acceptThread()
 		FD_ZERO(&readFds);
 		FD_SET(_srvSocket, &readFds);
 
-		struct timeval tv = { 1, 0 }; // 1秒超时
+		struct timeval tv = { 0, std::max(0, _acceptTimeout) * 1000 };
+		if (tv.tv_usec >= 1000000)
+		{
+			tv.tv_sec += tv.tv_usec / 1000000;
+			tv.tv_usec %= 1000000;
+		}
+
 		int ret = select(_srvSocket + 1, &readFds, nullptr, nullptr, &tv);
 
 		if (ret < 0)
@@ -210,7 +226,7 @@ void BluetoothServer::acceptThread()
 
 			// 获取客户端信息
 			int clientId = getNextClientId();
-			auto clientInfo = std::make_shared<ClientInfo>();
+			auto clientInfo = std::make_unique<ClientInfo>();
 			clientInfo->socket = clientSocket;
 			clientInfo->address = bdaddrToString(clientAddr);
 			clientInfo->running = true;
@@ -219,12 +235,12 @@ void BluetoothServer::acceptThread()
 			// 保存客户端信息
 			{
 				std::lock_guard<std::mutex> lock(_clientsMutex);
-				_clients[clientId] = clientInfo;
+				_clients[clientId] = std::move(clientInfo);
 			}
 
 			// 启动客户端线程
-			std::shared_ptr<ClientInfo> info = _clients[clientId];
-			info->workThread = std::thread(&BluetoothServer::clientThread, this, clientId, info);
+			auto& info = _clients[clientId];
+			info->workThread = std::thread(&BluetoothServer::clientThread, this, clientId, info.get());
 
 			// 调用连接回调
 			_clientConnectCallback(clientId, info->address);
@@ -238,31 +254,57 @@ void BluetoothServer::acceptThread()
 	}
 }
 
-void BluetoothServer::clientThread(int clientId, std::shared_ptr<ClientInfo> clientInfo)
+void BluetoothServer::cleanupThread()
+{
+	while (_running)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+		// 断开所有客户端连接
+		std::vector<int> clientIds;
+
+		{
+			std::lock_guard<std::mutex> lock(_clientsMutex);
+			for (const auto& [id, client] : _clients)
+			{
+				if (!client->running)
+					clientIds.push_back(id);
+			}
+		}
+
+		for (int id : clientIds)
+			disconnectClient(id);
+	}
+}
+
+void BluetoothServer::clientThread(int clientId, ClientInfo* clientInfo)
 {
 	int clientSocket = clientInfo->socket;
 	std::string clientAddr = clientInfo->address;
 
 	// 设置接受超时
-	struct timeval tv = { 1, 0 }; // 1秒超时
+	struct timeval tv = { 0, std::max(0, _recvTimeout) * 1000 };
+	if (tv.tv_usec >= 1000000)
+	{
+		tv.tv_sec += tv.tv_usec / 1000000;
+		tv.tv_usec %= 1000000;
+	}
+	
 	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
 
-	char buffer[4096];
+	int bufferSize = std::max(_bufferSize, 1024);
+	std::vector<uint8_t> buffer(bufferSize, 0);
 
 	while (clientInfo->running && _running)
 	{
-		memset(buffer, 0, sizeof(buffer));
-		ssize_t bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+		ssize_t received = recv(clientSocket, buffer.data(), bufferSize, 0);
 
-		if (bytesReceived > 0)
+		if (received > 0)
 		{
-			buffer[bytesReceived] = '\0';
-			std::string data(buffer);
-
 			// 调用数据接受回调
-			_dataReceivedCallback(clientId, data);
+			_dataReceivedCallback(clientInfo->address, buffer.data(), received);
 		}
-		else if (bytesReceived == 0)
+		else if (received == 0)
 		{
 			// 客户端断开连接
 			break;
@@ -279,14 +321,13 @@ void BluetoothServer::clientThread(int clientId, std::shared_ptr<ClientInfo> cli
 		}
 	}
 
-	// 清理客户端资源
-	cleanupClient(clientId);
+	clientInfo->running = false;
 
 	// 调用断开连接回调
 	_clientDisconnectCallback(clientId, clientAddr);
 }
 
-ssize_t BluetoothServer::sendToClient(int clientId, const std::string& data)
+ssize_t BluetoothServer::sendToClient(int clientId, const std::vector<uint8_t>& data)
 {
 	std::lock_guard<std::mutex> lock(_clientsMutex);
 
@@ -297,7 +338,7 @@ ssize_t BluetoothServer::sendToClient(int clientId, const std::string& data)
 		return -1;
 	}
 
-	ssize_t bytesSent = send(it->second->socket, data.c_str(), data.length(), 0);
+	ssize_t bytesSent = send(it->second->socket, data.data(), data.size(), 0);
 
 	if (bytesSent < 0)
 		_errorCallback(clientId, "发送数据错误: " + std::string(strerror(errno)));
@@ -326,7 +367,7 @@ size_t BluetoothServer::broadcast(const std::string& data)
 
 void BluetoothServer::disconnectClient(int clientId)
 {
-	std::shared_ptr<ClientInfo> clientInfo;
+	std::unique_ptr<ClientInfo> clientInfo;
 
 	{
 		std::lock_guard<std::mutex> lock(_clientsMutex);
@@ -352,6 +393,7 @@ void BluetoothServer::disconnectClient(int clientId)
 			clientInfo->workThread.join();
 	}
 }
+
 std::vector<int> BluetoothServer::getConnectedClients() const
 {
 	std::vector<int> result;
@@ -401,12 +443,6 @@ std::string BluetoothServer::getLocalAddress() const
 	return std::string(addrBuf);
 }
 
-
-void BluetoothServer::cleanupClient(int clientId)
-{
-	std::lock_guard<std::mutex> lock(_clientsMutex);
-	_clients.erase(clientId);
-}
 
 int BluetoothServer::getNextClientId() { return _nextClientId++; }
 

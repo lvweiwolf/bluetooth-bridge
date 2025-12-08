@@ -31,7 +31,7 @@ Json::Value BluetoothManager::getPairedDevices()
 												   sdbus::ServiceName(INTERFACE_NAME),
 												   objectPath,
 												   properties);
-			
+
 			devices.emplace_back(std::move(device));
 		}
 	}
@@ -47,6 +47,52 @@ Json::Value BluetoothManager::getPairedDevices()
 
 	root["devices"] = devicesValue;
 	return root;
+}
+
+bool BluetoothManager::requestConnect(const std::string& deviceAddress)
+{
+	// 蓝牙适配器
+	if (_adapters.empty())
+	{
+		spdlog::error("未找到蓝牙适配器");
+		return false;
+	}
+
+	// 查找设备对象
+	std::string devicePath = deviceAddress;
+	std::replace(devicePath.begin(), devicePath.end(), ':', '_');
+
+	sdbus::ObjectPath deviceObjectPath =
+		sdbus::ObjectPath(_adapters.begin()->first + "/dev_" + devicePath);
+
+	// 查找发现设备
+	auto it = _devices.find(deviceObjectPath);
+	if (it != _devices.end())
+	{
+		// 设备已连接，直接返回
+		auto& device = it->second;
+		if (device->getProperties().connected)
+			return true;
+	}
+
+	// 尝试发现设备
+	try
+	{
+		// 1. 在已发现设备上查找
+		auto& adpater = _adapters.begin()->second;
+		adpater->removeDevice(deviceObjectPath);
+		
+		std::map<std::string, sdbus::Variant> connectionProps = { { "Address",
+																	sdbus::Variant(deviceAddress) } };
+		adpater->connectDevice(connectionProps);
+	}
+	catch (const sdbus::Error& e)
+	{
+		spdlog::error("请求连接设备失败: {}", e.getMessage());
+		return false;
+	}
+
+	return true;
 }
 
 void BluetoothManager::onInterfacesAdded(
@@ -88,7 +134,7 @@ void BluetoothManager::onInterfacesAdded(
 													   sdbus::ServiceName(INTERFACE_NAME),
 													   objectPath,
 													   properties);
-				
+
 				_devices[objectPath] = std::move(device);
 			}
 		}

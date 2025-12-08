@@ -1,12 +1,7 @@
 #include <chrono>
 #include <atomic>
 #include <csignal>
-
 #include <cstdint>
-#include <json/config.h>
-#include <json/reader.h>
-#include <memory>
-#include <random>
 #include <sstream>
 #include <iostream>
 
@@ -14,7 +9,7 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
-#include <mqtt/mqtt_client.h>
+#include <mqtt/mqtt_proxy.h>
 
 #include <bluetooth/agent.h>
 #include <bluetooth/profile.h>
@@ -24,98 +19,10 @@
 #include <bluetooth/rfcomm/server.h>
 #include <bluetooth/rfcomm/client.h>
 
+#include <utils/config.h>
 
 std::atomic<bool> running(true);
 
-namespace {
-
-	// 生成UUID字符串的局部函数
-	std::string generateUUID()
-	{
-		std::random_device rd;
-		std::mt19937 gen(rd());
-		std::uniform_int_distribution<> dis(0, 15);
-		std::uniform_int_distribution<> dis2(8, 11);
-
-		std::stringstream ss;
-
-		// UUID格式: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-		for (int i = 0; i < 8; i++)
-		{
-			ss << std::hex << dis(gen);
-		}
-		ss << "-";
-		for (int i = 0; i < 4; i++)
-		{
-			ss << std::hex << dis(gen);
-		}
-		ss << "-4"; // 版本4标识
-		for (int i = 0; i < 3; i++)
-		{
-			ss << std::hex << dis(gen);
-		}
-		ss << "-";
-		ss << std::hex << dis2(gen); // UUID变体标识 (8, 9, a, b)
-		for (int i = 0; i < 3; i++)
-		{
-			ss << std::hex << dis(gen);
-		}
-		ss << "-";
-		for (int i = 0; i < 12; i++)
-		{
-			ss << std::hex << dis(gen);
-		}
-
-		return ss.str();
-	}
-}
-
-// MQTT配置和测试的局部函数
-std::shared_ptr<MqttClientImpl> createAndConnectMqtt()
-{
-	// MQTT配置参数
-	std::string cliendId = generateUUID();
-	std::string username = "zhgd";
-	std::string password = "zhgd@1";
-	std::string server = "10.1.7.52";
-	int port = 21883;
-
-	// 创建MQTT客户端
-	auto mqtt_client = std::make_shared<MqttClientImpl>(cliendId, username, password, true);
-
-	// 设置连接回调
-	mqtt_client->setConnectCallback([](int rc) {
-		spdlog::info("MQTT连接回调 - 返回码: {}", rc);
-
-		if (rc == 0)
-			spdlog::info("MQTT连接成功!");
-		else
-			spdlog::error("MQTT连接失败，错误码: {}", rc);
-	});
-
-	// 设置断开连接回调
-	mqtt_client->setDisconnectCallback([]() { spdlog::warn("MQTT已断开连接"); });
-
-
-	// 连接到MQTT代理
-	if (mqtt_client->connect(server, port, 60))
-	{
-		// 配置订阅
-		// mqtt_client->subscribeAsync("/bluetooth/paired", 0);
-		// mqtt_client->setMessageCallback(
-		// 	"/bluetooth/paired",
-		// 	[](const std::string& topic, std::string message) {
-		// 		spdlog::info("收到消息 - 主题: {}, 内容: {}", topic, message);
-		// 	});
-		spdlog::info("成功連接到MQTT代理");
-	}
-	else
-	{
-		spdlog::error("无法连接到MQTT代理");
-	}
-
-	return mqtt_client;
-}
 
 void signalHandler(int signal)
 {
@@ -140,7 +47,7 @@ void setupLogger()
 
 	// 创建logger
 	std::vector<spdlog::sink_ptr> sinks{ console_sink, debug_file_sink, info_file_sink };
-	auto logger = std::make_shared<spdlog::logger>("multi_logger", sinks.begin(), sinks.end());
+	auto logger = std::make_shared<spdlog::logger>("logger", sinks.begin(), sinks.end());
 	logger->set_level(spdlog::level::debug);
 
 	spdlog::set_default_logger(logger);
@@ -148,148 +55,32 @@ void setupLogger()
 	spdlog::flush_every(std::chrono::seconds(3));
 }
 
-void mqttConnectDevice_Subscribe(std::shared_ptr<MqttClientImpl> mqtt,
-								 const std::string& topic,
-								 const std::string& message,
-								 BluetoothManager& bluetoothMgr)
-{
-	if (!mqtt)
-		return;
-
-	// 解析message 为json
-	Json::CharReaderBuilder readerBuilder;
-	Json::Value root;
-	JSONCPP_STRING errs;
-	std::istringstream iss(message);
-
-	if (!Json::parseFromStream(readerBuilder, iss, &root, &errs))
-	{
-		spdlog::error("解析JSON消息失败: {}", errs);
-		return;
-	}
-
-	auto parseJson = [&](const Json::Value& root, JSONCPP_STRING& lastError) -> bool {
-		if (!root.isMember("devices"))
-		{
-			lastError = "JSON解析错误：缺少 'devices' 字段";
-			return false;
-		}
-
-		auto devices = root["devices"];
-
-		for (Json::ArrayIndex i = 0; i < devices.size(); ++i)
-		{
-			const auto& device = devices[i];
-			if (!device.isMember("address"))
-			{
-				lastError = "JSON解析错误: 缺少 'address' 字段";
-				return false;
-			}
-
-			std::string address = device["address"].asString();
-			bluetoothMgr.requestConnect(address);
-		}
-
-		return true;
-	};
-
-	if (!parseJson(root, errs))
-	{
-		// 发布一个LastError MQTT消息
-		// mqtt_client->publishAsync("/org/booway/bluetooth/getLastError", "");
-	}
-}
-
-void mqttSendToDevice_Subscribe(std::shared_ptr<MqttClientImpl> mqttClient,
-								const std::string& topic,
-								const std::string& message,
-								BluetoothClient& client)
-{
-	if (!mqttClient)
-		return;
-
-	// 解析message 为json
-	Json::CharReaderBuilder readerBuilder;
-	Json::Value root;
-	JSONCPP_STRING errs;
-	std::istringstream iss(message);
-
-	if (!Json::parseFromStream(readerBuilder, iss, &root, &errs))
-	{
-	    spdlog::error("解析JSON消息失败: {}", errs);
-		return;
-	}
-
-	auto parseJson = [&](const Json::Value& root, JSONCPP_STRING& lastError) -> bool {
-		if (!root.isMember("devices"))
-		{
-			lastError = "JSON解析错误：缺少 'devices' 字段";
-			return false;
-		}
-
-		auto devices = root["devices"];
-
-		for (Json::ArrayIndex i = 0; i < devices.size(); ++i)
-		{
-			const auto& device = devices[i];
-			if (!device.isMember("address"))
-			{
-				lastError = "JSON解析错误: 缺少 'address' 字段";
-				return false;
-			}
-
-			std::string address = device["address"].asString();
-
-			if (!device.isMember("data"))
-			{
-			    lastError = "JSON解析错误: 缺少 'data' 字段";
-                return false;
-			}
-
-			std::string data = device["data"].asString();
-
-			if (!device.isMember("size"))
-			{
-			    lastError = "JSON解析错误: 缺少 'size' 字段";
-                return false;
-			}
-
-			Json::UInt size = device["size"].asUInt();
-			if (size != data.length())
-            {
-                lastError = "JSON解析错误: 数据校验失败";
-                return false;
-            }
-
-			client.send(data);
-		}
-
-		return true;
-	};
-
-	if (!parseJson(root, errs))
-	{
-		// 发布一个LastError MQTT消息
-		// mqtt_client->publishAsync("/org/booway/bluetooth/getLastError", "");
-	}
-}
-
-
 int main(int argc, char* argv[])
 {
 	// 设置信号处理
 	std::signal(SIGINT, signalHandler);
 	std::signal(SIGTERM, signalHandler);
 
-	// 初始化日志
-	setupLogger();
-
-	// 调用封装的MQTT配置和测试函数
-	auto mqtt = createAndConnectMqtt();
-
 	try
 	{
-		spdlog::info("启动蓝牙设备管理器");
+		// 读取配置文件
+		JsonConfig config("config.json");
+		if (!config.load())
+		{
+			spdlog::error("无法加载配置文件 config.json");
+			return 1;
+		}
+
+		int publishInterval = config.getInt("bluetooth.publish_interval_ms", 1000);
+		int srvAcceptTimeout = config.getInt("bluetooth.server.socket_accpet_timeout_ms", 1000);
+		int srvRecvTimeout = config.getInt("bluetooth.server.socket_recv_timeout_ms", 1000);
+		int srvBufferSize = config.getInt("bluetooth.server.socket_buffer_size", 1024);
+		
+		
+		// 初始化日志
+		setupLogger();
+
+		spdlog::info("===========启动蓝牙设备管理器===========");
 
 		// 1. 设备发现
 		auto conn_discovery = sdbus::createSystemBusConnection();
@@ -315,16 +106,8 @@ int main(int argc, char* argv[])
 			});
 
 			agent.setConfirmationCallback([](const std::string& device_path, uint32_t passkey) {
-#if 0
-			spdlog::info("设备 {} 请求确认配对，Passkey: {}", device_path, passkey);
-
-			char response;
-			std::cin >> response;
-			return (response == 'y' || response == 'Y');
-#else
 				// 自动确认配对
 				return true;
-#endif
 			});
 
 			agent_manager.registerAgent(agnet_path, "KeyboardDisplay");
@@ -333,36 +116,17 @@ int main(int argc, char* argv[])
 
 		// 3 启动RFCOMM服务器监听连接
 		BluetoothServer server("Bluetooth RFCOMM Server", 0);
+		server.setBufferSize(srvBufferSize);
+		server.setAcceptTimeout(srvAcceptTimeout);
+		server.setRecvTimeout(srvRecvTimeout);
 		server.start();
 
-		// 4. 启动RFCOMM客户端
-		BluetoothClient client;
-		client.setConnectCallback([&](const std::string& address, uint8_t channel) {
-			spdlog::info("[Client] 客户端连接到服务器 {} (channel {})", address, (int)channel);
-			client.send("Hello from Bluetooth Client!");
-		});
+		// 4. 配置MQTT代理
+		MqttProxy mqtt(bluetoothMgr, server, config);
+		mqtt.setup();
 
-		// 配置mqtt的订阅
-		if (mqtt)
-		{
-			std::string topic = "/org/booway/bluetooth/connectDevice";
-			mqtt->subscribeAsync(topic, 0);
-			mqtt->setMessageCallback(
-				topic,
-				[mqtt, &bluetoothMgr](const std::string& topic, std::string message) {
-					mqttConnectDevice_Subscribe(mqtt, topic, message, bluetoothMgr);
-				});
 
-			topic = "/org/booway/bluetooth/sendToDevice";
-			mqtt->subscribeAsync(topic, 0);
-			mqtt->setMessageCallback(
-				topic,
-				[mqtt, &client](const std::string& topic, std::string message) {
-					mqttSendToDevice_Subscribe(mqtt, topic, message, client);
-				});
-		}
-
-		std::chrono::milliseconds interval(0);
+		std::chrono::milliseconds ellapse(0);
 		auto preTime = std::chrono::steady_clock::now();
 
 		// 主循环，等待设备发现
@@ -371,19 +135,20 @@ int main(int argc, char* argv[])
 			std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
 			auto curTime = std::chrono::steady_clock::now();
-			interval += std::chrono::duration_cast<std::chrono::milliseconds>(curTime - preTime);
+			ellapse += std::chrono::duration_cast<std::chrono::milliseconds>(curTime - preTime);
 			preTime = curTime;
 
-			if (interval.count() >= 3000)
+			if (ellapse.count() >= publishInterval)
 			{
 				// MQTT 发布订阅
 				Json::Value devicesJson = bluetoothMgr.getPairedDevices();
-				std::string devicesStr = devicesJson.toStyledString();
-				mqtt->publishAsync("/org/booway/bluetooth/devices", devicesStr, 0, false);
+				std::string body = devicesJson.toStyledString();
+				std::vector<uint8_t> payload(body.begin(), body.end());
+				
+				mqtt.publish("/org/booway/bluetooth/devices", payload);
 
-				interval = std::chrono::milliseconds(0);
+				ellapse = std::chrono::milliseconds(0);
 			}
-
 #if 0
 			char response;
 			std::cin >> response;

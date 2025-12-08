@@ -16,8 +16,7 @@ public:
 
 	Json::Value getPairedDevices();
 
-	void requestConnect(const std::string& deviceAddress);
-
+	bool requestConnect(const std::string& deviceAddress);
 
 private:
 	void onInterfacesAdded(

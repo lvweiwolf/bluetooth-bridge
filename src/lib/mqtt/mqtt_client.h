@@ -5,11 +5,12 @@
 
 #include <defines.h>
 #include <mqtt/job.h>
+#include <utils/config.h>
 
 class CORE_API MqttClientImpl : public mosqpp::mosquittopp
 {
 public:
-	using MessageCallback = std::function<void(const std::string&, std::string message)>;
+	using MessageCallback = std::function<void(const std::string&, const std::vector<uint8_t>&)>;
 	using ConnectCallback = std::function<void(int)>;
 	using DisconnectCallback = std::function<void()>;
 
@@ -30,9 +31,9 @@ public:
 
 	// 发布消息（异步）
 	void publishAsync(const std::string& topic,
-					   const std::string& message,
-					   int qos = 0,
-					   bool retain = false);
+					  const std::vector<uint8_t>& payload,
+					  int qos = 0,
+					  bool retain = false);
 
 	// 订阅主题（异步）
 	void subscribeAsync(const std::string& topic, int qos = 0);
@@ -77,7 +78,7 @@ private:
 	// 内部辅助函数
 	void handleConnectAsync(int rc);
 	void handleDisconnectAsync(int rc);
-	void handleMessageAsync(const std::string& topic, std::string message);
+	void handleMessageAsync(const std::string& topic, const std::vector<uint8_t>& data);
 };
 
 

@@ -59,27 +59,21 @@ bool MqttClientImpl::connect(const std::string& host, int port, int keepalive)
 void MqttClientImpl::disconnect() { mosqpp::mosquittopp::disconnect(); }
 
 void MqttClientImpl::publishAsync(const std::string& topic,
-							   const std::string& message,
-							   int qos,
-							   bool retain)
+								  const std::vector<uint8_t>& payload,
+								  int qos,
+								  bool retain)
 {
 	if (!_job_queue)
-	{
 		return;
-	}
-
-	auto payload = static_cast<const void*>(message.data());
-	size_t payload_len = message.length();
 
 	// 复制payload数据，确保在异步操作中有效
-	std::vector<uint8_t> payload_copy(static_cast<const uint8_t*>(payload),
-									  static_cast<const uint8_t*>(payload) + payload_len);
+	// std::vector<uint8_t> payload_copy(payload);
 
-	_job_queue->submit([this, topic, payload_copy, qos, retain]() {
+	_job_queue->submit([this, topic, payload, qos, retain]() {
 		int rc = mosqpp::mosquittopp::publish(nullptr,
 											  topic.c_str(),
-											  payload_copy.size(),
-											  payload_copy.data(),
+											  payload.size(),
+											  payload.data(),
 											  qos,
 											  retain);
 		if (rc != MOSQ_ERR_SUCCESS)
@@ -170,18 +164,13 @@ void MqttClientImpl::on_message(const struct mosquitto_message* message)
 	const void* payload = message->payload;
 	size_t payload_len = message->payloadlen;
 
-	void* buffer = malloc(payload_len + 1);
-	((char*)buffer)[payload_len] = 0;
-
-	if (buffer != nullptr)
-		memcpy(buffer, payload, payload_len);
-
-	std::string msg_str = (char*)buffer;
+	std::vector<uint8_t> buffer(payload_len, 0);
+	memcpy(buffer.data(), payload, payload_len);
 
 	// 异步处理消息回调
 	if (_job_queue)
 	{
-		_job_queue->submit([this, topic, msg_str]() { handleMessageAsync(topic, msg_str); });
+		_job_queue->submit([this, topic, buffer]() { handleMessageAsync(topic, buffer); });
 	}
 }
 
@@ -219,10 +208,9 @@ void MqttClientImpl::handleDisconnectAsync(int rc)
 	}
 }
 
-void MqttClientImpl::handleMessageAsync(const std::string& topic, std::string message)
+void MqttClientImpl::handleMessageAsync(const std::string& topic, const std::vector<uint8_t>& data)
 {
 	std::lock_guard<std::mutex> lock(_callback_mutex);
-	spdlog::info("收到MQTT消息 - 主题: {}, 内容: {}", topic, message);
 
 	// 查找匹配的回调函数
 	for (const auto& pair : _message_callbacks)
@@ -232,7 +220,7 @@ void MqttClientImpl::handleMessageAsync(const std::string& topic, std::string me
 		{
 			if (pair.second)
 			{
-				pair.second(topic, message);
+				pair.second(topic, data);
 			}
 			break; // 找到第一个匹配的回调就返回
 		}

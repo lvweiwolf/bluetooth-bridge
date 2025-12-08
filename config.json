@@ -1,0 +1,21 @@
+{
+    "mqtt" :{
+        "username": "zhgd",
+        "password": "zhgd@1",
+        "host": "10.1.7.52",
+        "port": 21883
+    },
+    "bluetooth": {
+        "publish_interval_ms": 3000,
+        "server": {
+            "socket_buffer_size": 4096,
+            "socket_accpet_timeout_ms": 1000,
+            "socket_recv_timeout_ms": 1000
+        },
+        "client": {
+            "socket_buffer_size": 4096,
+            "socket_connect_timeout_ms": 5000,
+            "socket_recv_timeout_ms": 1000
+        }
+    }
+}
