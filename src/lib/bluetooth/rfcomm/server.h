@@ -93,7 +93,6 @@ public:
 
 private:
 	void acceptThread();
-	void cleanupThread();
 	void clientThread(int clientId, ClientInfo* client);
 	int getNextClientId();
 
@@ -118,9 +117,6 @@ private:
 
 	// 线程
 	std::thread _acceptThread;
-
-	// 垃圾回收线程
-	std::thread _cleanupThread;
 
 	// 回调函数
 	ClientCallback _clientConnectCallback;

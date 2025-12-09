@@ -15,13 +15,13 @@ MqttClientImpl::MqttClientImpl(const std::string& client_id, bool clean_session)
 	mosqpp::lib_init();
 
 	// 严格的串型模式
-    max_inflight_messages_set(0);
+	max_inflight_messages_set(0);
 }
 
 MqttClientImpl::MqttClientImpl(const std::string& client_id,
-					   const std::string& username,
-					   const std::string& password,
-					   bool clean_session)
+							   const std::string& username,
+							   const std::string& password,
+							   bool clean_session)
 	: mosquittopp(client_id.c_str(), clean_session),
 	  _job_queue(std::make_unique<JobQueue>(2)),
 	  _connected(false),
@@ -76,7 +76,10 @@ void MqttClientImpl::publishAsync(const std::string& topic,
 											  payload.data(),
 											  qos,
 											  retain);
-		if (rc != MOSQ_ERR_SUCCESS)
+		
+		if (rc == MOSQ_ERR_SUCCESS)
+			spdlog::debug("已发布消息到主题: {}", topic);
+		else
 			spdlog::error("消息发布失败: {}", mosquitto_strerror(rc));
 	});
 }
@@ -91,7 +94,9 @@ void MqttClientImpl::subscribeAsync(const std::string& topic, int qos)
 	_job_queue->submit([this, topic, qos]() {
 		int rc = mosqpp::mosquittopp::subscribe(nullptr, topic.c_str(), qos);
 
-		if (rc != MOSQ_ERR_SUCCESS)
+		if (rc == MOSQ_ERR_SUCCESS)
+			spdlog::debug("已订阅主题: {}", topic);
+		else
 			spdlog::error("订阅失败: {}", mosquitto_strerror(rc));
 	});
 }
@@ -174,21 +179,11 @@ void MqttClientImpl::on_message(const struct mosquitto_message* message)
 	}
 }
 
-void MqttClientImpl::on_publish(int mid)
-{
-	// 可以在这里添加发布成功的回调处理
-}
+void MqttClientImpl::on_publish(int mid) {}
 
-void MqttClientImpl::on_subscribe(int mid, int qos_count, const int* granted_qos)
-{
-	// 可以在这里添加订阅成功的回调处理
-	spdlog::info("订阅成功");
-}
+void MqttClientImpl::on_subscribe(int mid, int qos_count, const int* granted_qos) {}
 
-void MqttClientImpl::on_unsubscribe(int mid)
-{
-	// 可以在这里添加取消订阅成功的回调处理
-}
+void MqttClientImpl::on_unsubscribe(int mid) {}
 
 void MqttClientImpl::handleConnectAsync(int rc)
 {

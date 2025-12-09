@@ -55,7 +55,7 @@ bool BluetoothClient::connect(const std::string& deviceAddress, uint8_t channel)
 	if (_connected)
 	{
 		_errorCallback("已经连接到设备，先断开现有连接");
-		disconnect();
+		return false;
 	}
 
 	if (channel == 0)
@@ -80,11 +80,11 @@ bool BluetoothClient::connect(const std::string& deviceAddress, uint8_t channel)
 		return false;
 	}
 
-	// 启动接收线程
 	_running = true;
 	_connected = true;
+	// 启动数据接收线程
 	_receiveThread = std::thread(&BluetoothClient::receiveThread, this);
-
+	
 	// 获取本地地址
 	_localAddress = getLocalAddress();
 
@@ -120,11 +120,9 @@ void BluetoothClient::disconnect()
 	}
 
 	// 通知断开连接
-	if (_disconnectCallback)
-		_disconnectCallback(_remoteAddress, _channel);
+	_disconnectCallback(_remoteAddress, _channel);
 
-	if (_statusCallback)
-		_statusCallback(false);
+	_statusCallback(false);
 }
 
 ssize_t BluetoothClient::send(const std::vector<uint8_t>& data)
@@ -144,7 +142,6 @@ ssize_t BluetoothClient::send(const std::vector<uint8_t>& data)
 		return -1;
 	}
 
-	spdlog::info("[Client] 发送数据 ({} 字节)：{}", sent, data);
 	return sent;
 }
 
@@ -226,6 +223,11 @@ void BluetoothClient::receiveThread()
 			_dataReceivedCallback(getRemoteAddress(), buffer.data(), received);
 		}
 	}
+
+	// 开启短线程断开连接
+	std::thread([this]() {
+		this->disconnect();
+	}).detach();
 }
 
 bool BluetoothClient::connectToDevice(const std::string& address, uint8_t channel)

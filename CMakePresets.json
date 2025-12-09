@@ -23,9 +23,9 @@
                 }
             },
             "environment": {
-                "VCPKG_ROOT": "/home/lvwei/dev/vcpkg",
-                "http_proxy": "http://127.0.0.1:10809",
-                "https_proxy": "http://127.0.0.1:10809"
+                "VCPKG_ROOT": "/home/ztl/dev/vcpkg",
+                "http_proxy": "http://10.1.7.46:10809",
+                "https_proxy": "http://10.1.7.46:10809"
             }
         },
         {
@@ -41,23 +41,15 @@
             }
         },
         {
-            "name": "macos-debug",
-            "displayName": "macOS Debug",
+            "name": "linux-release",
+            "displayName": "Linux Release",
+            "inherits": "linux-base",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "installDir": "${sourceDir}/out/install/${presetName}",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
-            },
-            "condition": {
-                "type": "equals",
-                "lhs": "${hostSystemName}",
-                "rhs": "Darwin"
-            },
-            "vendor": {
-                "microsoft.com/VisualStudioRemoteSettings/CMake/1.0": {
-                    "sourceDir": "$env{HOME}/.vs/$ms{projectDirName}"
-                }
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
             }
         }
     ],
@@ -66,6 +58,11 @@
             "name": "debug",
             "configurePreset": "linux-debug",
             "configuration": "Debug"
+        },
+        {
+            "name": "release",
+            "configurePreset": "linux-release",
+            "configuration": "Release"
         }
     ]
 }

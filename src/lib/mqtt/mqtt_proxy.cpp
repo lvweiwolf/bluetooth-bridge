@@ -213,7 +213,7 @@ void MqttProxy::connectTo(const std::string& topic, const std::vector<uint8_t>& 
 			return false;
 		}
 
-		std::lock_guard<std::mutex> lock(_clientsMutex);
+		std::unique_lock<std::mutex> lock(_clientsMutex);
 		auto it = _clients.find(address);
 		if (it != _clients.end())
 		{
@@ -317,7 +317,6 @@ void MqttProxy::disconnectTo(const std::string& topic, const std::vector<uint8_t
 
 		{
 			// 设备是服务端，断开作为客户端的连接
-			std::lock_guard<std::mutex> lock(_clientsMutex);
 			auto it = _clients.find(address);
 			if (it != _clients.end())
 				it->second->disconnect();
@@ -325,7 +324,6 @@ void MqttProxy::disconnectTo(const std::string& topic, const std::vector<uint8_t
 
 		{
 			// 设备是客户端，服务端主动断开连接
-			std::lock_guard<std::mutex> lock(_clientIdsMutex);
 			auto it = _clientIds.find(address);
 			if (it != _clientIds.end())
 				_server.disconnectClient(it->second);
@@ -495,11 +493,18 @@ void MqttProxy::onServerDisconnected(const std::string& address, uint8_t channel
 {
 	spdlog::info("服务器已断开连接: {} - {}", address, static_cast<int>(channel));
 
+	// 保留内存，避免在_clients.erase时析构，导致无法获取远程设备地址
+	std::unique_ptr<BluetoothClient> client;
+
 	{
 		std::lock_guard<std::mutex> lock(_clientsMutex);
 		auto it = _clients.find(address);
 		if (it != _clients.end())
+		{
+
+			client = std::move(it->second);
 			_clients.erase(it);
+		}
 	}
 
 	// 发布与服务端断开连接事件

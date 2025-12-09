@@ -2,7 +2,6 @@
 #include <atomic>
 #include <csignal>
 #include <cstdint>
-#include <sstream>
 #include <iostream>
 
 #include <spdlog/spdlog.h>

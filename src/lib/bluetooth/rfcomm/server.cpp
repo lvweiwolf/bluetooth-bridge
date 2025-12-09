@@ -134,8 +134,6 @@ bool BluetoothServer::start()
 
 	// 启动接受连接线程
 	_acceptThread = std::thread(&BluetoothServer::acceptThread, this);
-	// 启动垃圾回收线程
-	_cleanupThread = std::thread(&BluetoothServer::cleanupThread, this);
 
 	spdlog::info("[Server] {} 启动 RFCOMM, channel: {}", _serverName,
 			 static_cast<int>(_channel));
@@ -161,9 +159,6 @@ void BluetoothServer::stop()
 	// 等待接受线程结束
 	if (_acceptThread.joinable())
 		_acceptThread.join();
-
-	if (_cleanupThread.joinable())
-		_cleanupThread.join();
 
 	// 断开所有客户端连接
 	std::vector<int> clientIds;
@@ -254,28 +249,6 @@ void BluetoothServer::acceptThread()
 	}
 }
 
-void BluetoothServer::cleanupThread()
-{
-	while (_running)
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-		// 断开所有客户端连接
-		std::vector<int> clientIds;
-
-		{
-			std::lock_guard<std::mutex> lock(_clientsMutex);
-			for (const auto& [id, client] : _clients)
-			{
-				if (!client->running)
-					clientIds.push_back(id);
-			}
-		}
-
-		for (int id : clientIds)
-			disconnectClient(id);
-	}
-}
 
 void BluetoothServer::clientThread(int clientId, ClientInfo* clientInfo)
 {
@@ -321,10 +294,10 @@ void BluetoothServer::clientThread(int clientId, ClientInfo* clientInfo)
 		}
 	}
 
-	clientInfo->running = false;
-
-	// 调用断开连接回调
-	_clientDisconnectCallback(clientId, clientAddr);
+	// 开启短线程断开连接
+	std::thread([this, clientId]() {
+		disconnectClient(clientId);
+	}).detach();	
 }
 
 ssize_t BluetoothServer::sendToClient(int clientId, const std::vector<uint8_t>& data)
@@ -379,7 +352,7 @@ void BluetoothServer::disconnectClient(int clientId)
 		clientInfo = std::move(it->second);
 		_clients.erase(it);
 	}
-
+	
 	if (clientInfo)
 	{
 		clientInfo->running = false;
@@ -391,6 +364,8 @@ void BluetoothServer::disconnectClient(int clientId)
 		// 等待线程结束
 		if (clientInfo->workThread.joinable())
 			clientInfo->workThread.join();
+
+		_clientDisconnectCallback(clientId, clientInfo->address);
 	}
 }
 
