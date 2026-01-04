@@ -26,8 +26,9 @@ public:
 protected:
 	void connectTo(const std::string& topic, const std::vector<uint8_t>& payload);
 	void disconnectTo(const std::string& topic, const std::vector<uint8_t>& payload);
-
 	void sendTo(const std::string& topic, const std::vector<uint8_t>& payload);
+	void removeDevices(const std::string& topic, const std::vector<uint8_t>& payload);
+	void connectBenchmarkTest(const std::string& topic, const std::vector<uint8_t>& payload);
 
 	void onClientConnected(int clientId, const std::string& address);
 	void onClientDisconnected(int clientId, const std::string& address);
@@ -37,10 +38,11 @@ protected:
 
 	void onReceiveClientData(const std::string& address, const uint8_t* data, size_t size);
 	void onReceiveServerData(const std::string& address, const uint8_t* data, size_t size);
-	
+
+
 private:
 	bool createAndConnect();
-	
+
 	BluetoothManager& _manager;
 	BluetoothServer& _server;
 	JsonConfig& _config;

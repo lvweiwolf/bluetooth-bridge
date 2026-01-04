@@ -1,9 +1,9 @@
 #ifndef BLUETOOTH_OBJECT_PROFILE_ADAPTOR_H_
 #define BLUETOOTH_OBJECT_PROFILE_ADAPTOR_H_
 
-#include <sdbus-c++/sdbus-c++.h>
-#include <spdlog/spdlog.h>
+#include <utils/logger.h>
 
+#include <sdbus-c++/sdbus-c++.h>
 
 namespace org::bluez {
 	class Profile1_adaptor
@@ -21,13 +21,14 @@ namespace org::bluez {
 			try
 			{
 				// 注册方法
-				_object.addVTable(
-					sdbus::registerMethod("NewConnection")
-						.withInputParamNames("device", "fd", "options")
-						.implementedAs(
-							[this](const sdbus::ObjectPath& device,
-								   const sdbus::UnixFd& fd,
-								   const std::map<std::string, sdbus::Variant>& properties) {
+				_object
+					.addVTable(
+						sdbus::registerMethod("NewConnection")
+							.withInputParamNames("device", "fd", "options")
+							.implementedAs(
+								[this](const sdbus::ObjectPath& device,
+									   const sdbus::UnixFd& fd,
+									   const std::map<std::string, sdbus::Variant>& properties) {
 									this->onNewConnection(device, fd, properties);
 								}))
 					.forInterface(INTERFACE_NAME);
@@ -42,20 +43,18 @@ namespace org::bluez {
 					.forInterface(INTERFACE_NAME);
 
 				_object
-					.addVTable(sdbus::registerMethod("Release").implementedAs([this]() {
-						this->onRelease();
-					}))
+					.addVTable(sdbus::registerMethod("Release").implementedAs(
+						[this]() { this->onRelease(); }))
 					.forInterface(INTERFACE_NAME);
 
 				_object
-					.addVTable(sdbus::registerMethod("Cancel").implementedAs([this]() {
-						this->onCancel();
-					}))
+					.addVTable(sdbus::registerMethod("Cancel").implementedAs(
+						[this]() { this->onCancel(); }))
 					.forInterface(INTERFACE_NAME);
 			}
 			catch (const sdbus::Error& e)
 			{
-				spdlog::error("注册蓝牙配置接口失败: {}", e.what());
+				LOG_ERROR("注册蓝牙配置接口失败 - {}", e.what());
 			}
 		}
 

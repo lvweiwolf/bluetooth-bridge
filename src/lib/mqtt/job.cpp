@@ -1,5 +1,5 @@
 #include <mqtt/job.h>
-#include <spdlog/spdlog.h>
+#include <utils/logger.h>
 
 
 JobQueue::JobQueue(size_t num_threads, size_t max_queue_size)
@@ -37,11 +37,11 @@ void JobQueue::workerThread()
 		}
 		catch (const std::exception& e)
 		{
-			spdlog::error("Job exception: {}", e.what());
+			LOG_ERROR("执行任务发生异常 - {}", e.what());
 		}
 		catch (...)
 		{
-			spdlog::error("Unknown job exception");
+			LOG_ERROR("未知任务异常");
 		}
 
 		{

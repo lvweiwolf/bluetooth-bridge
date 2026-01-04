@@ -59,10 +59,6 @@ public:
 		_dataReceivedCallback = std::move(callback);
 	}
 
-	void setErrorCallback(ErrorCallback callback) { _errorCallback = std::move(callback); }
-
-	void setStatusCallback(StatusCallback callback) { _statusCallback = std::move(callback); }
-
 	void setBufferSize(int size) { _bufferSize = size; }
 
 	void setConnectTimeout(int seconds) { _connectTimeout = seconds; }
@@ -104,8 +100,6 @@ private:
 	ClientCallback _connectCallback;
 	ClientCallback _disconnectCallback;
 	DataCallback _dataReceivedCallback;
-	ErrorCallback _errorCallback;
-	StatusCallback _statusCallback;
 
 	// 互斥锁
 	mutable std::mutex _socketMutex;

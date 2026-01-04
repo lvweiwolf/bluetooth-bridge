@@ -1,5 +1,6 @@
 #include <mqtt/mqtt_proxy.h>
 #include <utils/base64.h>
+#include <utils/logger.h>
 
 #include <mutex>
 #include <random>
@@ -86,21 +87,21 @@ bool MqttProxy::createAndConnect()
 
 	// 设置连接回调
 	_mqtt->setConnectCallback([](int rc) {
-		spdlog::info("MQTT连接回调 - 返回码: {}", rc);
+		LOG_INFO("MQTT连接回调 - 返回码 - {}", rc);
 
 		if (rc == 0)
-			spdlog::info("MQTT连接成功!");
+			LOG_INFO("MQTT连接成功!");
 		else
-			spdlog::error("MQTT连接失败，错误码: {}", rc);
+			LOG_ERROR("MQTT连接失败，错误码 - {}", rc);
 	});
 
 	// 设置断开连接回调
-	_mqtt->setDisconnectCallback([]() { spdlog::warn("MQTT已断开连接"); });
+	_mqtt->setDisconnectCallback([]() { LOG_WARN("MQTT已断开连接"); });
 
 	// 连接到MQTT代理
 	if (!_mqtt->connect(server, port, 60))
 	{
-		spdlog::error("无法连接到MQTT代理");
+		LOG_ERROR("无法连接到MQTT代理");
 		return false;
 	}
 
@@ -152,6 +153,23 @@ bool MqttProxy::setup()
 		topic,
 		std::bind(&MqttProxy::sendTo, this, std::placeholders::_1, std::placeholders::_2));
 
+	// 移除已配对设备
+	topic = "/org/booway/bluetooth/removeDevices";
+	_mqtt->subscribeAsync(topic, 0);
+	_mqtt->setMessageCallback(
+		topic,
+		std::bind(&MqttProxy::removeDevices, this, std::placeholders::_1, std::placeholders::_2));
+
+
+	topic = "/org/booway/bluetooth/connectBenchmarkTest";
+	_mqtt->subscribeAsync(topic, 0);
+	_mqtt->setMessageCallback(topic,
+							  std::bind(&MqttProxy::connectBenchmarkTest,
+										this,
+										std::placeholders::_1,
+										std::placeholders::_2));
+
+
 	return true;
 }
 
@@ -173,7 +191,7 @@ void MqttProxy::connectTo(const std::string& topic, const std::vector<uint8_t>& 
 
 	if (!Json::parseFromStream(readerBuilder, iss, &root, &errs))
 	{
-		spdlog::error("解析JSON消息失败: {}", errs);
+		LOG_ERROR("解析JSON消息失败 - {}", errs);
 		return;
 	}
 
@@ -186,7 +204,7 @@ void MqttProxy::connectTo(const std::string& topic, const std::vector<uint8_t>& 
 	auto parseJson = [&](const Json::Value& root, JSONCPP_STRING& lastError) -> bool {
 		if (!root.isMember("device"))
 		{
-			lastError = "JSON解析错误：缺少 'devices' 字段";
+			lastError = "JSON解析错误：缺少 'device' 字段";
 			return false;
 		}
 
@@ -198,6 +216,12 @@ void MqttProxy::connectTo(const std::string& topic, const std::vector<uint8_t>& 
 		if (device.isMember("publishTime"))
 			publishTime = device["publishTime"].asString();
 
+		if (!device.isMember("pincode"))
+		{
+			lastError = "JSON解析错误: 缺少 'pincode' 字段";
+			return false;
+		}
+
 		if (!device.isMember("address"))
 		{
 			lastError = "JSON解析错误: 缺少 'address' 字段";
@@ -205,13 +229,10 @@ void MqttProxy::connectTo(const std::string& topic, const std::vector<uint8_t>& 
 		}
 
 		std::string address = device["address"].asString();
+		std::string pincode = device["pincode"].asString();
 
-		// 配对和连接到蓝牙
-		if (!_manager.requestConnect(address))
-		{
-			lastError = "设备蓝牙连接失败: " + address;
+		if (!_manager.requestConnectWithPincode(address, pincode, lastError))
 			return false;
-		}
 
 		std::unique_lock<std::mutex> lock(_clientsMutex);
 		auto it = _clients.find(address);
@@ -285,7 +306,7 @@ void MqttProxy::disconnectTo(const std::string& topic, const std::vector<uint8_t
 
 	if (!Json::parseFromStream(readerBuilder, iss, &root, &errs))
 	{
-		spdlog::error("解析JSON消息失败: {}", errs);
+		LOG_ERROR("解析JSON消息失败 - {}", errs);
 		return;
 	}
 
@@ -295,7 +316,7 @@ void MqttProxy::disconnectTo(const std::string& topic, const std::vector<uint8_t
 	auto parseJson = [&](const Json::Value& root, JSONCPP_STRING& lastError) -> bool {
 		if (!root.isMember("device"))
 		{
-			lastError = "JSON解析错误：缺少 'devices' 字段";
+			lastError = "JSON解析错误：缺少 'device' 字段";
 			return false;
 		}
 
@@ -357,7 +378,7 @@ void MqttProxy::sendTo(const std::string& topic, const std::vector<uint8_t>& pay
 
 	if (!Json::parseFromStream(readerBuilder, iss, &root, &errs))
 	{
-		spdlog::error("解析JSON消息失败: {}", errs);
+		LOG_ERROR("解析JSON消息失败 - {}", errs);
 		return;
 	}
 
@@ -367,7 +388,7 @@ void MqttProxy::sendTo(const std::string& topic, const std::vector<uint8_t>& pay
 	auto parseJson = [&](const Json::Value& root, JSONCPP_STRING& lastError) -> bool {
 		if (!root.isMember("device"))
 		{
-			lastError = "JSON解析错误：缺少 'devices' 字段";
+			lastError = "JSON解析错误：缺少 'device' 字段";
 			return false;
 		}
 
@@ -396,9 +417,20 @@ void MqttProxy::sendTo(const std::string& topic, const std::vector<uint8_t>& pay
 			return false;
 		}
 
+		std::string str;
 		std::string address = device["address"].asString();
 		std::string strBase64 = device["data"].asString();
-		std::string str = base64_decode(strBase64);
+
+		try
+		{
+			str = base64_decode(strBase64);
+		}
+		catch (const std::exception& e)
+		{
+			lastError = "JSON解析错误: 数据Base64解码失败";
+			return false;
+		}
+
 		std::vector<uint8_t> data(str.begin(), str.end());
 
 		Json::UInt size = device["size"].asUInt();
@@ -440,9 +472,134 @@ void MqttProxy::sendTo(const std::string& topic, const std::vector<uint8_t>& pay
 	}
 }
 
-#define JSON_BODY_CREATE(x)                                                                        \
+void MqttProxy::removeDevices(const std::string& topic, const std::vector<uint8_t>& payload)
+{
+	std::string jsonBody(payload.begin(), payload.end());
+
+	// 解析message 为json
+	Json::CharReaderBuilder readerBuilder;
+	Json::Value root;
+	JSONCPP_STRING errs;
+	std::istringstream iss(jsonBody);
+
+	if (!Json::parseFromStream(readerBuilder, iss, &root, &errs))
+	{
+		LOG_ERROR("解析JSON消息失败 - {}", errs);
+		return;
+	}
+
+	std::string publishId = "";
+	std::string publishTime = "";
+
+	auto parseJson = [&](const Json::Value& root, JSONCPP_STRING& lastError) -> bool {
+		if (!root.isMember("address"))
+		{
+			lastError = "JSON解析错误：缺少 'address' 字段";
+			return false;
+		}
+
+		std::vector<std::string> addressList;
+		auto address = root["address"];
+
+		if (address.isArray())
+		{
+			for (const auto& addr : address)
+				addressList.push_back(addr.asString());
+		}
+		else
+			addressList.push_back(address.asString());
+
+		if (root.isMember("publishId"))
+			publishId = root["publishId"].asString();
+
+		if (root.isMember("publishTime"))
+			publishTime = root["publishTime"].asString();
+
+		if (!root.isMember("address"))
+		{
+			lastError = "JSON解析错误: 缺少 'address' 字段";
+			return false;
+		}
+
+		bool hasError = false;
+
+		for (const std::string& deviceAddr : addressList)
+		{
+			std::string removeErr;
+			if (!_manager.requestRemoveDevice(deviceAddr, removeErr))
+			{
+				hasError = true;
+				lastError = removeErr;
+			}
+		}
+
+		return !hasError;
+	};
+
+	if (!parseJson(root, errs))
+	{
+		Json::Value root;
+		root["subscribeId"] = publishId;
+		root["subscribeTime"] = publishTime;
+		root["message"] = errs;
+		std::string body = root.toStyledString();
+		std::vector<uint8_t> payload(body.begin(), body.end());
+
+		publish("/org/booway/bluetooth/getLastError", payload);
+	}
+}
+
+
+void MqttProxy::connectBenchmarkTest(const std::string& topic, const std::vector<uint8_t>& payload)
+{
+	std::string jsonBody(payload.begin(), payload.end());
+
+	// 解析message 为json
+	Json::CharReaderBuilder readerBuilder;
+	Json::Value root;
+	JSONCPP_STRING errs;
+	std::istringstream iss(jsonBody);
+
+	if (!Json::parseFromStream(readerBuilder, iss, &root, &errs))
+	{
+		LOG_ERROR("解析JSON消息失败 - {}", errs);
+		return;
+	}
+
+	std::string address = root["address"].asString();
+	int times = root["times"].asInt();
+
+	Json::Value body;
+	Json::Value device;
+	device["address"] = address;
+	device["pincode"] = "0000";
+	device["publishId"] = "019af669-232c-7433-9e1a-50613d2803b4";
+	device["publishTime"] = "2024-06-12 10:20:30";
+	body["device"] = device;
+
+	std::string str = body.toStyledString();
+	std::vector<uint8_t> sendData(str.begin(), str.end());
+
+	bool bSend = true;
+
+	for (int i = 0; i < times * 2; ++i)
+	{
+		if (bSend)
+			publish("/org/booway/bluetooth/connectDevice", sendData);
+		else
+			publish("/org/booway/bluetooth/disconnectDevice", sendData);
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		bSend = !bSend;
+	}
+}
+
+
+#define JSON_BODY_CONNECTION(x, name)                                                              \
 	Json::Value root, device;                                                                      \
 	device["address"] = (x);                                                                       \
+	device["name"] = (name);                                                                       \
 	device["publishId"] = generateUUID();                                                          \
 	device["publishTime"] = formatTime(std::chrono::system_clock::now());                          \
 	root["device"] = device;                                                                       \
@@ -450,22 +607,28 @@ void MqttProxy::sendTo(const std::string& topic, const std::vector<uint8_t>& pay
 
 void MqttProxy::onClientConnected(int clientId, const std::string& address)
 {
-	spdlog::info("客户端已连接: {} - {}", clientId, address);
+	LOG_INFO("已连接: {}/{} -> {}", clientId, address, _server.getLocalAddress());
 
 	{
 		std::lock_guard<std::mutex> lock(_clientIdsMutex);
 		_clientIds[address] = clientId;
 	}
 
+	// 如果在发现设备列表中，返回名称
+	std::string name;
+	auto devicePtr = _manager.findDevice(address);
+	if (devicePtr != nullptr)
+		name = devicePtr->getProperties().name;
+
 	// 发布客户端连接事件
-	JSON_BODY_CREATE(address)
+	JSON_BODY_CONNECTION(address, name)
 	std::vector<uint8_t> payload(body.begin(), body.end());
 	publish("/org/booway/bluetooth/newConnection", payload);
 }
 
 void MqttProxy::onClientDisconnected(int clientId, const std::string& address)
 {
-	spdlog::info("客户端已断开连接: {} - {}", clientId, address);
+	LOG_INFO("已断开: {}/{} -> {}", clientId, address, _server.getLocalAddress());
 
 	{
 		std::lock_guard<std::mutex> lock(_clientIdsMutex);
@@ -474,24 +637,37 @@ void MqttProxy::onClientDisconnected(int clientId, const std::string& address)
 			_clientIds.erase(it);
 	}
 
+	// 如果在发现设备列表中，返回名称
+	std::string name;
+	auto devicePtr = _manager.findDevice(address);
+	if (devicePtr != nullptr)
+		name = devicePtr->getProperties().name;
+
 	// 发布客户端断开连接时间
-	JSON_BODY_CREATE(address)
+	JSON_BODY_CONNECTION(address, name)
 	std::vector<uint8_t> payload(body.begin(), body.end());
 	publish("/org/booway/bluetooth/loseConnection", payload);
 }
 
 void MqttProxy::onServerConnected(const std::string& address, uint8_t channel)
 {
-	spdlog::info("服务器已连接: {} - {}", address, static_cast<int>(channel));
+	LOG_INFO("已连接: {} -> {}/{}", _server.getLocalAddress(), channel, address);
+
+	// 如果在发现设备列表中，返回名称
+	std::string name;
+	auto devicePtr = _manager.findDevice(address);
+	if (devicePtr != nullptr)
+		name = devicePtr->getProperties().name;
+
 	// 发布连接到服务端事件
-	JSON_BODY_CREATE(address)
+	JSON_BODY_CONNECTION(address, name)
 	std::vector<uint8_t> payload(body.begin(), body.end());
 	publish("/org/booway/bluetooth/newConnection", payload);
 }
 
 void MqttProxy::onServerDisconnected(const std::string& address, uint8_t channel)
 {
-	spdlog::info("服务器已断开连接: {} - {}", address, static_cast<int>(channel));
+	LOG_INFO("已断开: {} -> {}/{}", _server.getLocalAddress(), channel, address);
 
 	// 保留内存，避免在_clients.erase时析构，导致无法获取远程设备地址
 	std::unique_ptr<BluetoothClient> client;
@@ -507,8 +683,14 @@ void MqttProxy::onServerDisconnected(const std::string& address, uint8_t channel
 		}
 	}
 
+	// 如果在发现设备列表中，返回名称
+	std::string name;
+	auto devicePtr = _manager.findDevice(address);
+	if (devicePtr != nullptr)
+		name = devicePtr->getProperties().name;
+
 	// 发布与服务端断开连接事件
-	JSON_BODY_CREATE(address)
+	JSON_BODY_CONNECTION(address, name)
 	std::vector<uint8_t> payload(body.begin(), body.end());
 	publish("/org/booway/bluetooth/loseConnection", payload);
 }
@@ -525,7 +707,7 @@ void MqttProxy::onServerDisconnected(const std::string& address, uint8_t channel
 
 void MqttProxy::onReceiveClientData(const std::string& address, const uint8_t* data, size_t size)
 {
-	spdlog::info("收到客户端数据: {} - 大小: {}", address, size);
+	LOG_INFO("已接收: {}({} bytes) -> SERVER", address, size);
 
 	JSON_BODY_DATA_CREATE(address, data, size)
 	std::vector<uint8_t> payload(body.begin(), body.end());
@@ -534,7 +716,7 @@ void MqttProxy::onReceiveClientData(const std::string& address, const uint8_t* d
 
 void MqttProxy::onReceiveServerData(const std::string& address, const uint8_t* data, size_t size)
 {
-	spdlog::info("收到服务器数据: {} - 大小: {}", address, size);
+	LOG_INFO("已接收: {}({} bytes) -> CLIENT", address, size);
 
 	JSON_BODY_DATA_CREATE(address, data, size)
 	std::vector<uint8_t> payload(body.begin(), body.end());

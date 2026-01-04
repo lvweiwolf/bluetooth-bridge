@@ -26,7 +26,8 @@ public:
 
 	// 提交任务到队列
 	template <typename F, typename... Args>
-	auto submit(F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type>;
+	auto submit(F&& f, Args&&... args)
+		-> std::future<typename std::invoke_result<F, Args...>::type>;
 
 	// 获取队列中的任务数量
 	size_t getQueueSize() const;
@@ -67,9 +68,9 @@ private:
 
 template <typename F, typename... Args>
 auto JobQueue::submit(F&& f, Args&&... args)
-	-> std::future<typename std::result_of<F(Args...)>::type>
+	-> std::future<typename std::invoke_result<F, Args...>::type>
 {
-	using return_type = typename std::result_of<F(Args...)>::type;
+	using return_type = typename std::invoke_result<F, Args...>::type;
 
 	auto task = std::make_shared<std::packaged_task<return_type()>>(
 		std::bind(std::forward<F>(f), std::forward<Args>(args)...));

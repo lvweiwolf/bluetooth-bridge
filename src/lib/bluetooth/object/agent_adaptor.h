@@ -1,8 +1,9 @@
 #ifndef BLUETOOTH_OBJECT_AGENT_ADAPTOR_H_
 #define BLUETOOTH_OBJECT_AGENT_ADAPTOR_H_
 
+#include <utils/logger.h>
+
 #include <sdbus-c++/sdbus-c++.h>
-#include <spdlog/spdlog.h>
 
 namespace org::bluez {
 	class Agent1_adaptor
@@ -69,7 +70,7 @@ namespace org::bluez {
 			}
 			catch (const sdbus::Error& e)
 			{
-				spdlog::error("注册蓝牙代理接口失败: {}", e.what());
+				LOG_ERROR("注册蓝牙代理接口失败 - {}", e.what());
 			}
 		}
 

@@ -7,6 +7,10 @@
     },
     "bluetooth": {
         "publish_interval_ms": 3000,
+        "max_repair_count": 5,      // 最大重试配对次数
+        "max_reconnect_count": 5,   // 最大重试连接次数
+        "timeout_pair_ms": 5000,     // 配对超时时间，设置为0时，使用系统默认值
+        "timeout_connect_ms": 5000,  // 连接超时时间，设置为0时，使用系统默认值
         "server": {
             "socket_buffer_size": 4096,
             "socket_accpet_timeout_ms": 1000,

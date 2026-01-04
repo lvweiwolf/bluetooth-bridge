@@ -1,5 +1,5 @@
-
 #include <bluetooth/agent.h>
+#include <utils/logger.h>
 
 Agent::Agent(sdbus::IConnection& connection, sdbus::ObjectPath objectPath)
 	: AdaptorInterfaces(connection, objectPath)
@@ -21,7 +21,7 @@ void Agent::setConfirmationCallback(ConfirmationCallback callback)
 
 std::string Agent::onRequestPincode(sdbus::ObjectPath objectPath)
 {
-	spdlog::info("请求PIN码，设备路径: {}", objectPath);
+	LOG_INFO("请求PIN码，设备路径 - {}", objectPath);
 
 	if (_pinRequestCallback)
 		return _pinRequestCallback(objectPath);
@@ -32,12 +32,12 @@ std::string Agent::onRequestPincode(sdbus::ObjectPath objectPath)
 
 void Agent::onDisplayPincode(sdbus::ObjectPath objectPath, const std::string& pincode)
 {
-	spdlog::info("显示PIN码，设备路径: {}, PIN码: {}", objectPath, pincode);
+	LOG_INFO("显示PIN码，设备路径 - {}, PIN码 - {}", objectPath, pincode);
 }
 
 uint32_t Agent::onRequestPasskey(sdbus::ObjectPath objectPath)
 {
-	spdlog::info("请求Passkey，设备路径: {}", objectPath);
+	LOG_INFO("请求Passkey，设备路径 - {}", objectPath);
 
 	if (_pinRequestCallback)
 	{
@@ -50,12 +50,12 @@ uint32_t Agent::onRequestPasskey(sdbus::ObjectPath objectPath)
 
 void Agent::onDisplayPasskey(sdbus::ObjectPath objectPath, uint32_t passkey, uint16_t entered)
 {
-	spdlog::info("显示Passkey，设备路径: {}, Passkey: {}, 已输入: {}", objectPath, passkey, entered);
+	LOG_INFO("显示Passkey，设备路径 - {}, Passkey - {}, 已输入 - {}", objectPath, passkey, entered);
 }
 
 void Agent::onRequestConfirmation(sdbus::ObjectPath objectPath, uint32_t passkey)
 {
-	spdlog::info("请求确认，设备路径: {}, Passkey: {}", objectPath, passkey);
+	LOG_INFO("请求确认，设备路径 - {}, Passkey - {}", objectPath, passkey);
 
 	if (_confirmationCallback)
 	{

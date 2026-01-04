@@ -1,8 +1,11 @@
 #ifndef BLUETOOTH_ADAPTER_H
 #define BLUETOOTH_ADAPTER_H
 
-#include <bluetooth/proxy/adapter_proxy.h>
 #include <map>
+
+#include <json/json.h>
+#include <bluetooth/proxy/adapter_proxy.h>
+
 
 class Adapter : public sdbus::ProxyInterfaces<sdbus::Properties_proxy, org::bluez::Adapter1_proxy>
 {
@@ -22,6 +25,31 @@ public:
 		std::uint32_t discoverableTimeout;
 		std::uint32_t pairableTimeout;
 		std::vector<std::string> uuids;
+
+		Json::Value toJson() const
+		{
+			Json::Value json;
+			json["Address"] = address;
+			json["AddressType"] = addressType;
+			json["Alias"] = alias;
+			json["Class"] = static_cast<Json::UInt>(classType);
+			json["Discoverable"] = discoverable;
+			json["DiscoverableTimeout"] = static_cast<Json::UInt>(discoverableTimeout);
+			json["Discovering"] = discovering;
+			json["Modalias"] = modalias;
+			json["Name"] = name;
+			json["Pairable"] = pairable;
+			json["PairableTimeout"] = static_cast<Json::UInt>(pairableTimeout);
+			json["Powered"] = powered;
+
+			Json::Value uuidArray(Json::arrayValue);
+			for (const auto& uuid : uuids)
+				uuidArray.append(uuid);
+			
+			json["UUIDs"] = uuidArray;
+
+			return json;
+		}
 	};
 
 	Adapter(sdbus::IConnection& connection,

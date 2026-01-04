@@ -1,5 +1,5 @@
 #include <mqtt/mqtt_client.h>
-#include <spdlog/spdlog.h>
+#include <utils/logger.h>
 
 #include <string.h>
 
@@ -78,9 +78,9 @@ void MqttClientImpl::publishAsync(const std::string& topic,
 											  retain);
 		
 		if (rc == MOSQ_ERR_SUCCESS)
-			spdlog::debug("已发布消息到主题: {}", topic);
+			LOG_DEBUG("已发布消息到主题 - {}", topic);
 		else
-			spdlog::error("消息发布失败: {}", mosquitto_strerror(rc));
+			LOG_ERROR("消息发布失败 - {}", mosquitto_strerror(rc));
 	});
 }
 
@@ -95,9 +95,9 @@ void MqttClientImpl::subscribeAsync(const std::string& topic, int qos)
 		int rc = mosqpp::mosquittopp::subscribe(nullptr, topic.c_str(), qos);
 
 		if (rc == MOSQ_ERR_SUCCESS)
-			spdlog::debug("已订阅主题: {}", topic);
+			LOG_DEBUG("已订阅主题 - {}", topic);
 		else
-			spdlog::error("订阅失败: {}", mosquitto_strerror(rc));
+			LOG_ERROR("订阅失败 - {}", mosquitto_strerror(rc));
 	});
 }
 
@@ -112,7 +112,7 @@ void MqttClientImpl::unsubscribeAsync(const std::string& topic)
 		int rc = mosqpp::mosquittopp::unsubscribe(nullptr, topic.c_str());
 
 		if (rc != MOSQ_ERR_SUCCESS)
-			spdlog::error("取消订阅失败: {}", mosquitto_strerror(rc));
+			LOG_ERROR("取消订阅失败 - {}", mosquitto_strerror(rc));
 	});
 }
 

@@ -1,5 +1,6 @@
 #include <bluetooth/rfcomm/server.h>
 #include <bluetooth/rfcomm/sdp.h>
+#include <utils/logger.h>
 
 #include <sstream>
 
@@ -24,27 +25,19 @@ BluetoothServer::BluetoothServer(const std::string& name, uint8_t channel)
 	  _clientConnectCallback(nullptr),
 	  _clientDisconnectCallback(nullptr),
 	  _dataReceivedCallback(nullptr),
-	  _errorCallback(nullptr),
 	  _sdp_handle(0)
 {
 	// 设置默认回调
-	_clientConnectCallback = [](int id, const std::string& addr) {
-		spdlog::info("[Server] 客户端 {} ({}) 连接到服务器", id, addr);
+	_clientConnectCallback = [this](int id, const std::string& addr) {
+		LOG_INFO("已连接: {}/{} -> {}", id, addr, getLocalAddress());
 	};
 
-	_clientDisconnectCallback = [](int id, const std::string& addr) {
-		spdlog::info("[Server] 客户端 {} ({}) 连接断开", id, addr);
+	_clientDisconnectCallback = [this](int id, const std::string& addr) {
+		LOG_INFO("已断开: {}/{} -> {}", id, addr, getLocalAddress());
 	};
 
 	_dataReceivedCallback = [](const std::string& address, const uint8_t* data, size_t size) {
-		std::string dataStr(reinterpret_cast<const char*>(data), size);
-		spdlog::info("[Server] 从客户端 {} 获取数据: {}",
-					 address,
-					 dataStr.length() > 50 ? dataStr.substr(0, 50) + "..." : dataStr);
-	};
-
-	_errorCallback = [](int id, const std::string& error) {
-		spdlog::error("[Server] 客户端 {} 发生错误: {}", id, error);
+		LOG_INFO("已接收: {}/{} BYTES -> SERVER", address, size);
 	};
 
 	if (_channel == 0)
@@ -79,7 +72,7 @@ bool BluetoothServer::start()
 {
 	if (_running)
 	{
-		_errorCallback(-1, "服务器已经在运行");
+		LOG_WARN("RFCOMM 服务器已经运行");
 		return false;
 	}
 
@@ -87,9 +80,10 @@ bool BluetoothServer::start()
 	_srvSocket = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
 	if (_srvSocket < 0)
 	{
-		_errorCallback(-1, "创建套接字失败: " + std::string(strerror(errno)));
 		close(_srvSocket);
 		_srvSocket = -1;
+
+		LOG_ERROR("RFCOMM 服务器内部错误 - {}", strerror(errno));
 		return false;
 	}
 
@@ -97,9 +91,10 @@ bool BluetoothServer::start()
 	int reuse = 1;
 	if (setsockopt(_srvSocket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0)
 	{
-		_errorCallback(-1, "设置套接字选项失败: " + std::string(strerror(errno)));
 		close(_srvSocket);
 		_srvSocket = -1;
+
+		LOG_ERROR("RFCOMM 服务器内部错误 - {}", strerror(errno));
 		return false;
 	}
 
@@ -111,18 +106,20 @@ bool BluetoothServer::start()
 
 	if (bind(_srvSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0)
 	{
-		_errorCallback(-1, "绑定套接字失败: " + std::string(strerror(errno)));
 		close(_srvSocket);
 		_srvSocket = -1;
+
+		LOG_ERROR("RFCOMM 服务器内部错误(bind) - {}", strerror(errno));
 		return false;
 	}
 
 	// 开始监听
 	if (listen(_srvSocket, 1) < 0)
 	{
-		_errorCallback(-1, "监听套接字失败: " + std::string(strerror(errno)));
 		close(_srvSocket);
 		_srvSocket = -1;
+
+		LOG_ERROR("RFCOMM 服务器内部错误(listen) - {}", strerror(errno));
 		return false;
 	}
 
@@ -135,9 +132,8 @@ bool BluetoothServer::start()
 	// 启动接受连接线程
 	_acceptThread = std::thread(&BluetoothServer::acceptThread, this);
 
-	spdlog::info("[Server] {} 启动 RFCOMM, channel: {}", _serverName,
-			 static_cast<int>(_channel));
-	spdlog::info("[Server] 本地地址: {}", getLocalAddress());
+	LOG_INFO("RFCOMM服务({}) 已启动，Channel - {}", _serverName, static_cast<int>(_channel));
+	LOG_INFO("本地蓝牙地址 - {}", getLocalAddress());
 
 	return true;
 }
@@ -171,7 +167,7 @@ void BluetoothServer::stop()
 	for (int id : clientIds)
 		disconnectClient(id);
 
-	spdlog::info("[Server] {} 停止 RFCOMM", _serverName);
+	LOG_INFO("RFCOMM服务({}) 已停止", _serverName);
 }
 
 void BluetoothServer::acceptThread()
@@ -198,7 +194,7 @@ void BluetoothServer::acceptThread()
 		if (ret < 0)
 		{
 			if (errno != EINTR)
-				_errorCallback(-1, "Select 错误: " + std::string(strerror(errno)));
+				LOG_ERROR("RFCOMM 服务器内部错误(select) - {}", strerror(errno));
 
 			continue;
 		}
@@ -214,7 +210,7 @@ void BluetoothServer::acceptThread()
 			if (clientSocket < 0)
 			{
 				if (errno != EAGAIN && errno != EWOULDBLOCK)
-					_errorCallback(-1, "接受连接错误: " + std::string(strerror(errno)));
+					LOG_ERROR("RFCOMM 服务器内部错误(accept) - {}", strerror(errno));
 
 				continue;
 			}
@@ -235,16 +231,16 @@ void BluetoothServer::acceptThread()
 
 			// 启动客户端线程
 			auto& info = _clients[clientId];
-			info->workThread = std::thread(&BluetoothServer::clientThread, this, clientId, info.get());
+			info->workThread =
+				std::thread(&BluetoothServer::clientThread, this, clientId, info.get());
 
 			// 调用连接回调
 			_clientConnectCallback(clientId, info->address);
 
 			// 发送欢迎消息
-			std::string welcome =
-				"Welcome to " + _serverName + " (Client ID: " + std::to_string(clientId) + ")\n";
-
-			send(clientSocket, welcome.c_str(), welcome.length(), 0);
+			// std::string welcome =
+			// 	"Welcome to " + _serverName + " (Client ID: " + std::to_string(clientId) + ")\n";
+			// send(clientSocket, welcome.c_str(), welcome.length(), 0);
 		}
 	}
 }
@@ -262,7 +258,7 @@ void BluetoothServer::clientThread(int clientId, ClientInfo* clientInfo)
 		tv.tv_sec += tv.tv_usec / 1000000;
 		tv.tv_usec %= 1000000;
 	}
-	
+
 	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
 
 	int bufferSize = std::max(_bufferSize, 1024);
@@ -286,7 +282,7 @@ void BluetoothServer::clientThread(int clientId, ClientInfo* clientInfo)
 		{
 			if (errno != EWOULDBLOCK && errno != EAGAIN)
 			{
-				_errorCallback(clientId, "接受数据错误: " + std::string(strerror(errno)));
+				LOG_ERROR("RFCOMM 服务器内部错误(recv) - {}", strerror(errno));
 				break;
 			}
 
@@ -295,9 +291,7 @@ void BluetoothServer::clientThread(int clientId, ClientInfo* clientInfo)
 	}
 
 	// 开启短线程断开连接
-	std::thread([this, clientId]() {
-		disconnectClient(clientId);
-	}).detach();	
+	std::thread([this, clientId]() { disconnectClient(clientId); }).detach();
 }
 
 ssize_t BluetoothServer::sendToClient(int clientId, const std::vector<uint8_t>& data)
@@ -307,14 +301,14 @@ ssize_t BluetoothServer::sendToClient(int clientId, const std::vector<uint8_t>& 
 	auto it = _clients.find(clientId);
 	if (it == _clients.end() || !it->second->running)
 	{
-		_errorCallback(clientId, "发送数据失败: 客户端未连接");
+		LOG_WARN("客户端未连接到 RFCOMM 服务器");
 		return -1;
 	}
 
 	ssize_t bytesSent = send(it->second->socket, data.data(), data.size(), 0);
 
 	if (bytesSent < 0)
-		_errorCallback(clientId, "发送数据错误: " + std::string(strerror(errno)));
+		LOG_ERROR("RFCOMM 服务器内部错误(send) - {}", strerror(errno));
 
 	return bytesSent;
 }
@@ -352,7 +346,7 @@ void BluetoothServer::disconnectClient(int clientId)
 		clientInfo = std::move(it->second);
 		_clients.erase(it);
 	}
-	
+
 	if (clientInfo)
 	{
 		clientInfo->running = false;

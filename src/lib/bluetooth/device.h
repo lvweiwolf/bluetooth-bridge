@@ -3,7 +3,7 @@
 
 #include <defines.h>
 #include <bluetooth/proxy/device_proxy.h>
-#include <spdlog/spdlog.h>
+#include <utils/logger.h>
 #include <json/json.h>
 
 #include <regex>
@@ -84,10 +84,9 @@ public:
 		: ProxyInterfaces{ connection, destination, objectPath }
 	{
 		registerProxy();
-		spdlog::debug("Device1: {}", objectPath);
 		onPropertiesChanged(sdbus::InterfaceName(Device1_proxy::INTERFACE_NAME), properties, {});
 	}
-	virtual ~Device() { unregisterProxy(); }
+	~Device() { unregisterProxy(); }
 
 	[[nodiscard]] const Properties& getProperties() const { return _properties; }
 
@@ -108,7 +107,7 @@ public:
 			return Modalias{ match[1].str(), match[2].str(), match[3].str() };
 		}
 
-		spdlog::error("解析模态失败: {}", mod_alias);
+		LOG_ERROR("解析模态失败 - {}", mod_alias);
 		return {};
 	}
 
@@ -167,7 +166,6 @@ private:
 		if (const auto key = sdbus::MemberName("RSSI"); changedProperties.count(key))
 		{
 			_properties.rssi = changedProperties.at(key).get<std::int16_t>();
-			spdlog::debug("RSSI: {}", _properties.rssi);
 		}
 		if (const auto key = sdbus::MemberName("ServicesResolved"); changedProperties.count(key))
 		{

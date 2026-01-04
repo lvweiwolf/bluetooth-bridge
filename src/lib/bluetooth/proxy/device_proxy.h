@@ -23,6 +23,14 @@ namespace org::bluez {
 		// 设备方法
 		void connect() { _proxy.callMethod("Connect").onInterface(INTERFACE_NAME); }
 
+		void connect(uint64_t timeout)
+		{
+			auto method = _proxy.createMethodCall(sdbus::InterfaceName(INTERFACE_NAME),
+												  sdbus::MethodName("Connect"));
+			
+			_proxy.callMethod(method, timeout);
+		}
+
 		void disconnect() { _proxy.callMethod("Disconnect").onInterface(INTERFACE_NAME); }
 
 		void connectProfile(const std::string& uuid)
@@ -36,6 +44,14 @@ namespace org::bluez {
 		}
 
 		void pair() { _proxy.callMethod("Pair").onInterface(INTERFACE_NAME); }
+
+		void pair(uint64_t timeout)
+		{
+			auto method = _proxy.createMethodCall(sdbus::InterfaceName(INTERFACE_NAME),
+												  sdbus::MethodName("Pair"));
+
+			_proxy.callMethod(method, timeout);
+		}
 
 		void cancelPairing() { _proxy.callMethod("CancelPairing").onInterface(INTERFACE_NAME); }
 

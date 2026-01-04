@@ -5,7 +5,7 @@
 
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
-#include <spdlog/spdlog.h>
+
 
 
 namespace sdp {

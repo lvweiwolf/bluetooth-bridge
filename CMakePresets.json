@@ -8,8 +8,8 @@
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "installDir": "${sourceDir}/out/install/${presetName}",
             "cacheVariables": {
-                "CMAKE_C_COMPILER": "gcc",
-                "CMAKE_CXX_COMPILER": "g++",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             },
             "condition": {
@@ -23,9 +23,9 @@
                 }
             },
             "environment": {
-                "VCPKG_ROOT": "/home/ztl/dev/vcpkg",
-                "http_proxy": "http://10.1.7.46:10809",
-                "https_proxy": "http://10.1.7.46:10809"
+                "VCPKG_ROOT": "/home/lvwei/dev/vcpkg",
+                "http_proxy": "http://127.0.0.1:10809",
+                "https_proxy": "http://127.0.0.1:10809"
             }
         },
         {

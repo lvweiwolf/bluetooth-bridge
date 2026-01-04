@@ -1,4 +1,7 @@
 #include <bluetooth/rfcomm/sdp.h>
+#include <utils/logger.h>
+
+#include <map>
 
 
 const bdaddr_t BDADDR_ANY_CC = { { 0, 0, 0, 0, 0, 0 } };
@@ -109,7 +112,7 @@ namespace sdp
 
 		if (!sdp_session)
 		{
-			spdlog::error("[SDP] 无法连接到本地SDP服务器");
+			LOG_ERROR("无法连接到本地SDP服务器 - {}", strerror(errno));
 			return false;
 		}
 
@@ -159,7 +162,7 @@ namespace sdp
 		// 注册服务
 		if (sdp_record_register(sdp_session, &sdp_record, SDP_RECORD_PERSIST) == -1)
 		{
-			spdlog::error("[SDP] 服务注册失败");
+			LOG_ERROR("SDP 服务注册失败 - {}", strerror(errno));
 
 			// cleanup
 			sdp_data_free(channel);
@@ -197,7 +200,7 @@ namespace sdp
 
 		if (!session)
 		{
-			spdlog::error("[SDP] 无法连接到本地SDP服务器");
+			LOG_ERROR("无法连接到本地SDP服务器 - {}", strerror(errno));
 			return false;
 		}
 
@@ -216,14 +219,14 @@ namespace sdp
 			}
 			else
 			{
-				spdlog::error("[SDP] 服务注销失败");
+				LOG_ERROR("SDP 服务注销失败 - {}", strerror(errno));
 				sdp_close(session);
 				return false;
 			}
 		}
 		else
 		{
-			spdlog::error("[SDP] 未找到要注销的服务");
+			LOG_ERROR("SDP 未找到要注销的服务");
 			sdp_close(session);
 			return false;
 		}
@@ -238,7 +241,7 @@ namespace sdp
 
 		if (!sdp_session)
 		{
-			spdlog::error("[SDP] 无法连接到本地SDP服务器");
+			LOG_ERROR("无法连接到 {} SDP服务器 - {}", address, strerror(errno));
 			return false;
 		}
 
@@ -261,12 +264,14 @@ namespace sdp
 
 		if (status == -1)
 		{
-			spdlog::error("[SDP] SDP服务搜索失败");
+			LOG_WARN("SDP 服务搜索失败 - {}", strerror(errno));
 			sdp_list_free(search_list, nullptr);
 			sdp_list_free(attrid_list, nullptr);
 			sdp_close(sdp_session);
 			return false;
 		}
+
+		std::map<uint8_t, std::string> spp_services;
 
 		bool find = false;
 		sdp_list_t* proto_list = nullptr;
@@ -287,14 +292,15 @@ namespace sdp
 			// 转换大写
 			std::string service_name(name);
 			std::string uuid_str(buf);
-			spdlog::info("[Client] 发现服务: {} UUID: {}", service_name, uuid_str);
 			
 			if (sdp_get_access_protos(record, &proto_list) == 0)
 			{
 				// get the RFCOMM port number
-				channel = sdp_get_proto_port(proto_list, RFCOMM_UUID);
+				uint8_t channelFound = sdp_get_proto_port(proto_list, RFCOMM_UUID);
 				sdp_list_free(proto_list, 0);
 				find = true;
+				LOG_INFO("发现 SDP 服务 - {}, UUID - {}", service_name, uuid_str);
+				spp_services[channelFound] = service_name;
 			}
 		}
 
@@ -302,6 +308,11 @@ namespace sdp
 		sdp_list_free(search_list, nullptr);
 		sdp_list_free(attrid_list, nullptr);
 		sdp_close(sdp_session);
+
+		if (find)
+			channel = spp_services.begin()->first;
+		else
+			LOG_WARN("SDP 服务搜索失败 - {}", strerror(errno));
 
 		return find;
 	}

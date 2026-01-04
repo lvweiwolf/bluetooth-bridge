@@ -173,7 +173,7 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         list(APPEND COMMON_COMPILE_OPTIONS
             -O3     # 最高优化级别
             -DNDEBUG
-            -flto   # 链接时优化
+            # -flto   # 链接时优化
         )
         set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -flto")
         set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} -flto")

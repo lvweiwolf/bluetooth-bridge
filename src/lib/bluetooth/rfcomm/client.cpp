@@ -1,5 +1,6 @@
 #include <bluetooth/rfcomm/client.h>
 #include <bluetooth/rfcomm/sdp.h>
+#include <utils/logger.h>
 
 #include <cstring>
 
@@ -21,30 +22,19 @@ BluetoothClient::BluetoothClient(const std::string& clientName)
 	  _channel(0),
 	  _connectCallback(nullptr),
 	  _disconnectCallback(nullptr),
-	  _dataReceivedCallback(nullptr),
-	  _errorCallback(nullptr),
-	  _statusCallback(nullptr)
+	  _dataReceivedCallback(nullptr)
 {
 
-	_connectCallback = [](const std::string& address, uint8_t channel) {
-		spdlog::info("[Client] 成功连接到服务器 {} (channel {})", address, (int)channel);
+	_connectCallback = [this](const std::string& address, uint8_t channel) {
+		LOG_INFO("已连接: {} -> {}/{}", _localAddress, channel, address);
 	};
 
-	_disconnectCallback = [](const std::string& address, uint8_t channel) {
-		spdlog::info("[Client] 从服务器 {} (channel {}) 断开连接", address, (int)channel);
+	_disconnectCallback = [this](const std::string& address, uint8_t channel) {
+		LOG_INFO("已断开: {} -> {}/{}", _localAddress, channel, address);
 	};
 
 	_dataReceivedCallback = [](const std::string& address, const uint8_t* data, size_t size) {
-		std::string dataStr(reinterpret_cast<const char*>(data), size);
-		spdlog::info("[Client] 接收到数据: {}", dataStr);
-	};
-
-	_errorCallback = [](const std::string& errorMessage) {
-		spdlog::error("[Client] {}", errorMessage);
-	};
-
-	_statusCallback = [](bool connected) {
-		spdlog::info("[Client] 状态: {}", connected ? "已连接" : "已断开");
+		LOG_INFO("已接收: {}/{} BYTES -> CLIENT", address, size);
 	};
 }
 
@@ -54,7 +44,7 @@ bool BluetoothClient::connect(const std::string& deviceAddress, uint8_t channel)
 {
 	if (_connected)
 	{
-		_errorCallback("已经连接到设备，先断开现有连接");
+		LOG_WARN("已连接到 RFCOMM 服务器");
 		return false;
 	}
 
@@ -62,37 +52,25 @@ bool BluetoothClient::connect(const std::string& deviceAddress, uint8_t channel)
 	{
 		// 自动查询可用通道
 		if (!sdp::findAvailableSPPChannel(deviceAddress, _channel))
-		{
-			_errorCallback("查询RFCOMM服务通道失败");
 			return false;
-		}
 	}
 	else
-	{
 		_channel = channel;
-	}
 
 	_remoteAddress = deviceAddress;
 
 	if (!connectToDevice(deviceAddress, _channel))
-	{
-		_errorCallback("连接失败");
 		return false;
-	}
 
 	_running = true;
 	_connected = true;
 	// 启动数据接收线程
 	_receiveThread = std::thread(&BluetoothClient::receiveThread, this);
-	
 	// 获取本地地址
 	_localAddress = getLocalAddress();
-
 	// 通知连接成功
 	_connectCallback(_remoteAddress, _channel);
-	_statusCallback(true);
 
-	spdlog::info("[Client] 成功连接到设备: {} , channel: {}", deviceAddress, (int)_channel);
 	return true;
 }
 
@@ -121,15 +99,13 @@ void BluetoothClient::disconnect()
 
 	// 通知断开连接
 	_disconnectCallback(_remoteAddress, _channel);
-
-	_statusCallback(false);
 }
 
 ssize_t BluetoothClient::send(const std::vector<uint8_t>& data)
 {
 	if (!_connected || _socket < 0)
 	{
-		_errorCallback("未连接到设备，无法发送数据");
+		LOG_WARN("RFCOMM 客户端未连接");
 		return -1;
 	}
 
@@ -138,7 +114,7 @@ ssize_t BluetoothClient::send(const std::vector<uint8_t>& data)
 
 	if (sent < 0)
 	{
-		_errorCallback("发送数据失败: " + std::string(strerror(errno)));
+		LOG_ERROR("RFCOMM 客户端内部错误(send) - {}", strerror(errno));
 		return -1;
 	}
 
@@ -149,7 +125,7 @@ std::string BluetoothClient::getLocalAddress() const
 {
 	if (_socket < 0)
 	{
-		_errorCallback("Socket未创建，无法获取本地地址");
+		LOG_WARN("RFCOMM 客户端套接字无效");
 		return "未知";
 	}
 
@@ -158,7 +134,7 @@ std::string BluetoothClient::getLocalAddress() const
 
 	if (getsockname(_socket, (struct sockaddr*)&localAddr, &len) < 0)
 	{
-		_errorCallback("获取本地地址失败: " + std::string(strerror(errno)));
+		LOG_ERROR("RFCOMM 客户端内部错误 - {}", strerror(errno));
 		return "未知";
 	}
 
@@ -191,7 +167,7 @@ void BluetoothClient::receiveThread()
 		{
 			if (errno != EINTR)
 			{
-				_errorCallback("select错误: " + std::string(strerror(errno)));
+				LOG_ERROR("RFCOMM 客户端内部错误(select) - {}", strerror(errno));
 				break;
 			}
 
@@ -211,9 +187,9 @@ void BluetoothClient::receiveThread()
 			if (received <= 0)
 			{
 				if (received == 0)
-					spdlog::info("[Client] 连接已关闭");
+					LOG_WARN("RFCOMM 客户端连接已关闭");
 				else
-					_errorCallback("接收数据错误: " + std::string(strerror(errno)));
+					LOG_ERROR("RFCOMM 客户端内部错误(recv) - {}", strerror(errno));
 
 				break;
 			}
@@ -225,9 +201,7 @@ void BluetoothClient::receiveThread()
 	}
 
 	// 开启短线程断开连接
-	std::thread([this]() {
-		this->disconnect();
-	}).detach();
+	std::thread([this]() { this->disconnect(); }).detach();
 }
 
 bool BluetoothClient::connectToDevice(const std::string& address, uint8_t channel)
@@ -235,7 +209,7 @@ bool BluetoothClient::connectToDevice(const std::string& address, uint8_t channe
 	_socket = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
 	if (_socket < 0)
 	{
-		spdlog::error("[Client] 创建socket失败: {}", strerror(errno));
+		LOG_ERROR("RFCOMM 客户端内部错误 - {}", strerror(errno));
 		return false;
 	}
 
@@ -243,9 +217,10 @@ bool BluetoothClient::connectToDevice(const std::string& address, uint8_t channe
 	int flags = fcntl(_socket, F_GETFL, 0);
 	if (flags < 0 || fcntl(_socket, F_SETFL, flags | O_NONBLOCK) < 0)
 	{
-		spdlog::error("[Client] 设置非阻塞模式失败: {}", strerror(errno));
 		close(_socket);
 		_socket = -1;
+
+		LOG_ERROR("RFCOMM 客户端内部错误 - {}", strerror(errno));
 		return false;
 	}
 
@@ -256,9 +231,10 @@ bool BluetoothClient::connectToDevice(const std::string& address, uint8_t channe
 
 	if (!stringTobaddr(address, addr.rc_bdaddr))
 	{
-		spdlog::error("[Client] 无效的蓝牙地址: {}", address);
 		close(_socket);
 		_socket = -1;
+
+		LOG_WARN("无效的 RFCOMM 服务器地址: {}", address);
 		return false;
 	}
 
@@ -293,43 +269,47 @@ bool BluetoothClient::connectToDevice(const std::string& address, uint8_t channe
 					socklen_t len = sizeof(error);
 					if (getsockopt(_socket, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0)
 					{
-						spdlog::error("[Client] 连接失败: {}", strerror(error));
 						close(_socket);
 						_socket = -1;
+
+						LOG_ERROR("RFCOMM 客户端内部错误(connect) - {}", strerror(errno));
 						return false;
 					}
 				}
 				else if (FD_ISSET(_socket, &errorfds))
 				{
-					spdlog::error("[Client] 连接出错");
 					close(_socket);
 					_socket = -1;
+
+					LOG_ERROR("RFCOMM 客户端内部错误(connect) - {}", strerror(errno));
 					return false;
 				}
 			}
 			else
 			{
-				spdlog::error("[Client] 连接超时");
 				close(_socket);
 				_socket = -1;
+
+				LOG_ERROR("RFCOMM 服务器连接超时 - {}", strerror(errno));
 				return false;
 			}
 		}
 		else
 		{
-			spdlog::error("[Client] 连接失败: {}", strerror(errno));
 			close(_socket);
 			_socket = -1;
+
+			LOG_ERROR("RFCOMM 客户端内部错误(connect) - {}", strerror(errno));
 			return false;
 		}
 	}
 
 	// 恢复阻塞模式
-	flags = fcntl(_socket, F_GETFL, 0);
-	if (flags >= 0)
-	{
-		fcntl(_socket, F_SETFL, flags & ~O_NONBLOCK);
-	}
+	// flags = fcntl(_socket, F_GETFL, 0);
+	// if (flags >= 0)
+	// {
+	// 	fcntl(_socket, F_SETFL, flags & ~O_NONBLOCK);
+	// }
 
 	return true;
 }

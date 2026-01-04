@@ -79,8 +79,6 @@ public:
 		_dataReceivedCallback = std::move(callback);
 	}
 
-	void setErrorCallback(ErrorCallback callback) { _errorCallback = std::move(callback); }
-
 	void setBufferSize(int size) { _bufferSize = size; }
 
 	void setAcceptTimeout(int milliseconds) { _acceptTimeout = milliseconds; }
@@ -122,7 +120,6 @@ private:
 	ClientCallback _clientConnectCallback;
 	ClientCallback _clientDisconnectCallback;
 	DataCallback _dataReceivedCallback;
-	ErrorCallback _errorCallback;
 
 	uint32_t _sdp_handle;
 };
